@@ -1,0 +1,22 @@
+{
+	"compilerOptions": {
+		"outDir": "./dist/",
+		"noImplicitAny": false,
+		"module": "commonjs",
+		"target": "es5",
+		"experimentalDecorators": true,
+		"emitDecoratorMetadata": true,
+		"allowJs": true,
+		"allowSyntheticDefaultImports": true,
+
+	},
+
+	"include": ["src/**/*.ts", "src/renderer/transform-controls.js", "src/renderer/effects/OutlineEffect.js"],
+	"exclude": [
+		"./node_modules/**/*"
+	],
+	"types": [
+		"three",
+		"gl-matrix"
+	]
+}

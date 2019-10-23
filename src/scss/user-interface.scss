@@ -1,0 +1,48 @@
+#user-interface{
+	--ui-text-color: rgba(245, 245, 245, 1);
+	--ui-padding-left: 4pt;
+	--ui-padding-right: 4pt;
+	--ui-padding-top: 4pt;
+	--ui-padding-bottom: 4pt;
+	--ui-background: rgba(45, 50, 60, 0.856);
+
+	--ui-header-padding-left: calc(var(--ui-padding-left)*2);
+	--ui-header-padding-right: calc(var(--ui-padding-right)*2);
+	--ui-header-padding-top: var(--ui-padding-top);
+	--ui-header-padding-bottom: var(--ui-padding-bottom);
+	--ui-header-font-size: 14pt;
+
+	--ui-font-weight--thicc: 800;
+	--ui-font-weight--thick: 500;
+	--ui-font-weight--regular: 400;
+	--ui-font-weight--light: 300;
+	--ui-font-family: "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+	position: absolute;
+	height: 100vh;
+	background: var(--ui-background);
+	color: var(--ui-text-color);
+	padding-left: var(--ui-padding-left);
+	padding-right: var(--ui-padding-left);
+	padding-top: var(--ui-padding-top);
+	padding-bottom: var(--ui-padding-bottom);
+
+
+	.row{
+		.header{
+			padding-left: var(--ui-header-padding-left);
+			padding-right: var(--ui-header-padding-left);
+			padding-top: var(--ui-header-padding-top);
+			padding-bottom: var(--ui-header-padding-bottom);
+
+			font-family: var(--ui-font-family);
+			font-size: var(--ui-header-font-size);
+			font-weight: var(--ui-font-weight--regular);
+		}
+	}
+
+	.thin{
+		font-weight: var(--ui-font-weight--light) !important;
+	}
+}
+
