@@ -8,6 +8,9 @@ import { Renderer } from './renderer/renderer';
 import { vec3, vec4, norm, mag } from './lib/math/math';
 import * as THREE from 'three';
 
+import { sizeof, sizeof_object } from './sizeof';
+
+Object.assign(window, { sizeof, sizeof_object });
 
 
 
@@ -70,6 +73,7 @@ async function main() {
 				children: [
 					mainMenu.button('expand-main-menu', 'fa-bars', 'Expand/Collapse Menu'),
 					mainMenu.seperator(),
+					mainMenu.button('import', 'fa-upload', 'Import Geometry'),
 					mainMenu.button('settings', 'fa-cog', 'Settings'),
 				]
 			},
@@ -101,24 +105,42 @@ async function main() {
 		state.mainMenu.setAttribute('state', state.mainMenu.getAttribute('state') === "expanded" ? "collapsed" : "expanded");
 	})
 
+	mainMenu.buttons['import'].addEventListener('click', e => {
+		const inp = document.createElement('input');
+		inp.setAttribute('type', 'file');
+		inp.setAttribute('class', 'hidden');
+		document.body.appendChild(inp);
+		inp.addEventListener('change', async ev => {
+			let file = (ev.target as HTMLInputElement).files[0] || false;
+			console.log(file);
+			if (file) {
+				const url = URL.createObjectURL(file);
+				await state.renderer.addGeometry(url);
+			}
+			inp.remove();
+		});
+		inp.click();
+		state.mainMenu.setAttribute('state', state.mainMenu.getAttribute('state') === "expanded" ? "collapsed" : "expanded");
+	})
+
 	mainMenu.buttons['settings'].addEventListener('click', e => {
 		state.settingsWindow.toggleVisibility();
 	})
 
 
-	let defaultgeom = 'res/rect.obj';
+	let defaultgeom = 'res/surface-contrib.obj';
 
 	const geomarr = await state.renderer.addGeometry(defaultgeom);
 	state.beamtracer = new BeamTracer({
 		geometry: geomarr as BufferGeometry[],
 		sources: [new Source({
-			pos: new vec3(3, 2, -1),
+			pos: new vec3(2, 2, 2),
 			col: new vec4(0.5, 4.0, 0.3, 0.7),
 			radius: .1,
 			name: 'main_source'
 		})],
 		receivers: [new Receiver({
-			pos: new vec3(-3, 5, 1),
+			pos: new vec3(-2, 2, 2),
 			col: new vec4(4.0, 0.5, 0.3, 0.7),
 			radius: .1,
 			name: 'main_receiver'
@@ -128,7 +150,7 @@ async function main() {
 	state.renderer.setSurfacePhysicalMaterial({ metalness: 0.8, transparent: true, opacity: 0.15, color: 0x000000, side: THREE.DoubleSide })
 	// console.log(state.beamtracer);
 
-		state.renderer.addSourcesAndReceivers(state.beamtracer.sources, state.beamtracer.receivers);
+	state.renderer.addSourcesAndReceivers(state.beamtracer.sources, state.beamtracer.receivers);
 
 		function dragChangedCallback(event) {
 			if (event.value) {
@@ -148,12 +170,12 @@ async function main() {
 				state.beamtracer.receivers[0].posarr = state.renderer.sourcesAndReceivers.getObjectByName('main_receiver').position.toArray()
 
 
-				const flat = arr => arr.reduce((a, b) => a.concat(b));
-				var images = state.beamtracer.solve(3);
-				const intersections = images.map(x => x.intersection).filter(x => x);
-				const beams = intersections.map(x => [state.beamtracer.receivers[0].posarr, x, x, state.beamtracer.sources[0].posarr]);
-				state.renderer.updatePoints(intersections);
-				state.renderer.updateBeams(flat(beams));
+				// const flat = arr => arr.reduce((a, b) => a.concat(b));
+				// var images = state.beamtracer.solve(3);
+				// const intersections = images.map(x => x.intersection).filter(x => x);
+				// const beams = intersections.map(x => [state.beamtracer.receivers[0].posarr, x, x, state.beamtracer.sources[0].posarr]);
+				// state.renderer.updatePoints(intersections);
+				// state.renderer.updateBeams(flat(beams));
 
 			}
 		}
@@ -179,12 +201,12 @@ async function main() {
 
 
 	// const flat = arr => arr.reduce((a, b) => a.concat(b));
-	var beams = state.beamtracer.solve(3);
+	// var beams = state.beamtracer.solve(3);
 	// console.log(images);
 	// const intersections = images.map(x => x.intersection).filter(x => x);
 	// const beams = .map(x => [state.beamtracer.receivers[0].posarr, x, x, state.beamtracer.sources[0].posarr]);
 	// state.renderer.updatePoints(intersections);
-	state.renderer.updateBeams(beams);
+	// state.renderer.updateBeams(beams);
 
 
 	state.eventManager.event("toggle-orthomode").addHandler((e) => {
@@ -216,5 +238,15 @@ async function main() {
 
 }
 
+
+function test() {
+	state.renderer.startMonteCarlo(state.renderer.sourcesAndReceivers.children[0].id, 15, 45, true);
+	setTimeout(() => {
+		state.renderer.stopAllMonteCarlo();
+		console.log('done');
+	}, 2000);
+}
+//@ts-ignore;
+window.test = test;
 
 main();

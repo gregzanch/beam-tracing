@@ -14,6 +14,13 @@ while (node.data.shape[0] > 1) {
 
 console.log(node);
 
+const maxPolygonsInLeaf = 4;
+const EPS_RAY_ENDS = 1.;
+const EPS_BOUNDING_BOX = 1.;
+const EPS_POLY_BOX_OVERLAP = 1.;
+const EPS_ISECT_POLYGON = 1e-5;
+const EPS_DISTANCE = 1e-5;
+
 export class TempNode {
 	public m_children: TempNode[];
 	public m_splitAxis: number;
@@ -31,14 +38,16 @@ export class TempNode {
 
 }
 
+class SortItem{
+	constructor(v?: number, polygon?: Polygon) {
+
+	}
+}
+
+
 export class BSP{
 
-	static maxPolygonsInLeaf = 4;
-	static EPS_RAY_ENDS = 1.;
-	static EPS_BOUNDING_BOX = 1.;
-	static EPS_POLY_BOX_OVERLAP = 1.;
-	static EPS_ISECT_POLYGON = 1e-5;
-	static EPS_DISTANCE = 1e-5;
+
 	public children: TempNode[]
 	constructor() {
 

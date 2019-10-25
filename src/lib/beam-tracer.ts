@@ -1,4 +1,4 @@
-import { vec3a, vec3, vec4, AABB, reflect, raytrix, raytrix2, norm, dot, sub} from './math/math';
+import { vec3a, vec3, vec4, AABB, reflect, raytrix, raytrix2, norm, dot, sub, dist} from './math/math';
 
 import { Source, SourceParams } from './source';
 import { Receiver, ReceiverParams } from './receiver';
@@ -141,7 +141,9 @@ export class BeamTracer{
 		return beams;
 	}
 
+	computeVirtualSources() {
 
+	}
 	computeImageSourcesRecursive(stack: any[], beams:any[], receiver: number[], source: number[], prev_surface: Polygon, max_order: number) {
 		// let imageSources = [];
 		// we need to reflect the source about all of the visible surfaces in the mesh
@@ -188,11 +190,13 @@ export class BeamTracer{
 		 *	the image source pos, (if none use source pos)
 		 * 	the intersecting surface
 		 */
-		const beams = [stack[stack.length - 1].receiver];
+
+		console.log(Array.from(stack));
+		const beams = [];
 		let prev_itx;
 		let ro;
 		let rd;
-		for (let i = stack.length - 1; i >= 0; i--){
+		for (let i =0; i<stack.length; i++){
 			ro = (i == stack.length - 1) ? stack[i].receiver : prev_itx;
 			if (ro) {
 				rd = sub(stack[i].imageSource, ro);
@@ -269,12 +273,24 @@ export class BeamTracer{
 			// console.log(ref);
 		})
 	}
-	traceRay(ro, rd) {
+	traceRay(ro, rd, order=5) {
+		let itx0;
+		let currentdist = 1e10;
 		for (let i = 0; i < this._polygons.length; i++){
 			for (let j = 0; j < this._polygons[i].tris.length; j++){
-
+				console.log(this._polygons[i].tris[j])
+				var itx = raytrix(ro, rd, this._polygons[i].tris[j]);
+				console.log(itx)
+				if (!peqp(itx, [0, 0, 0])) {
+					let d = dist(ro, itx);
+					if (!itx0 || d < currentdist) {
+						itx0 = itx;
+						currentdist = d;
+					}
+				}
 			}
 		}
+		return itx0
 	}
 
 	montecarlo() {

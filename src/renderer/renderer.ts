@@ -1,9 +1,11 @@
+
 import { EventManager } from './../events/eventManager';
+import { reflectionCoefficient } from '../lib/acoustics/reflection-coefficient';
 import { DomBugger } from './dombugger';
 import * as THREE from 'three';
 import { OrbitControls } from './orbit-controls';
 import { TransformControls } from './transform-controls.js';
-import { map, max, min, clamp, norm } from '../lib/math/math';
+import { map, max, min, clamp, norm, reflect } from '../lib/math/math';
 import { PickHelper } from './pick-helper';
 import hotkeys from 'hotkeys-js';
 import { Source } from '../lib/source';
@@ -39,6 +41,12 @@ interface RendererParams{
 	cameraPos?: THREE.Vector3;
 	cameraRot?: THREE.Euler;
 }
+
+export interface IndexedObject<T>{
+	[id: string]: T
+}
+
+
 
 export class Renderer {
 	loaders: {};
@@ -110,6 +118,12 @@ export class Renderer {
 	gridDivisions: number;
 	gridHelper: THREE.GridHelper;
 
+	monteCarloIntervalIds: IndexedObject<boolean>;
+
+	rays: THREE.Group;
+
+	trackPad: boolean;
+
 	constructor(params: RendererParams) {
 		this.modes = {
 			selectingGeometry: false
@@ -152,6 +166,7 @@ export class Renderer {
 		this.setupPoints = this.setupPoints.bind(this);
 		this.updateBeams = this.updateBeams.bind(this);
 		this.updatePoints = this.updatePoints.bind(this);
+		this.addPoint = this.addPoint.bind(this);
 		this.dragChanged = this.dragChanged.bind(this);
 		this.setupTransformControls = this.setupTransformControls.bind(this);
 		this.attachUpdateCallback = this.attachUpdateCallback.bind(this);
@@ -168,8 +183,14 @@ export class Renderer {
 		this.toggleVertexNormals = this.toggleVertexNormals.bind(this);
 		this.toggleGreyscaleSurfaceColor = this.toggleGreyscaleSurfaceColor.bind(this);
 		this.addLine = this.addLine.bind(this);
-
+		this.stopMonteCarlo = this.stopMonteCarlo.bind(this);
+		this.startMonteCarlo = this.startMonteCarlo.bind(this);
+		this.traceRay = this.traceRay.bind(this);
+		this.setTrackPad = this.setTrackPad.bind(this);
+		this.setupRays = this.setupRays.bind(this);
+		this.setupMonteCarlo = this.setupMonteCarlo.bind(this);
 		this.setup();
+		this.setTrackPad(false);
 		this.animate();
 		// this.update();
 		// this.render();
@@ -195,8 +216,10 @@ export class Renderer {
 		this.setupTransformControls();
 		this.setupBeams(6000);
 		this.setupPoints(6000);
+		this.setupRays(6000);
 		this.setupDomBugger();
 		this.setupQuatHelper();
+		this.setupMonteCarlo();
 		this.render();
 	}
 
@@ -208,7 +231,10 @@ export class Renderer {
 		this.easingCamera = false;
 	}
 	setupDomBugger() {
-		// this.dombugger = new DomBugger(document.querySelector('.dombugger-container'));
+		let container = document.createElement('div');
+		container.setAttribute('class', 'dombugger-container');
+		document.body.appendChild(container);
+		this.dombugger = new DomBugger(document.querySelector('.dombugger-container'));
 		// this.dombugger.watch('random', 1000, () => Math.random());
 	}
 	setupTransformControls() {
@@ -242,19 +268,11 @@ export class Renderer {
 		this.setOrthographicCamera(!this.isCameraOrtho);
 	}
 	startProcess(proc) {
-		switch (proc) {
-			case "lookat":
-				this.exitAllProcesses();
-				this.currentProcess = "lookat";
-				break;
-			default:
-
-				break;
-
-		}
+		this.exitAllProcesses();
+		this.currentProcess = proc;
 	}
 	setupHotKeys() {
-
+		hotkeys('f','base', ()=>this.startProcess('select_surface'))
 		hotkeys('o', 'base', this.toggleOrthographicCamera);
 		hotkeys('l', 'base', ()=>this.startProcess('lookat'));
 		hotkeys('esc', 'all', this.exitAllProcesses);
@@ -591,6 +609,9 @@ export class Renderer {
 			case "lookat":
 					this.pickHelper.pick(this.pickPosition, this.room.solid.children, this.camera);
 				break;
+			case "select_surface":
+				this.pickHelper.pick(this.pickPosition, this.room.solid.children, this.camera);
+				break;
 			default:
 				this.pickHelper.pick(this.pickPosition, this.sourcesAndReceivers.children, this.camera);
 				break;
@@ -740,6 +761,9 @@ export class Renderer {
 						case "lookat":
 							this.lookAtSurface(pick);
 							break;
+						case "select_surface":
+							this.getSurface(pick);
+							break;
 						default:
 							break;
 					}
@@ -758,6 +782,9 @@ export class Renderer {
 		}
 
 
+	}
+	getSurface(surface) {
+		console.log(surface);
 	}
 	lookAt(surface) {
 
@@ -830,7 +857,16 @@ export class Renderer {
 				debugMaterials.norm()
 			);
 			meshsolid.name = `${i}`;
-			meshsolid.userData = { kind: "geometry", selectable: true, surface: surface}
+			meshsolid.userData = {
+				kind: "geometry",
+				selectable: true,
+				surface: surface,
+				monteCarloHits: 0,
+				alpha: 0.2,
+				R(theta) {
+					return reflectionCoefficient(meshsolid.userData.alpha, theta);
+				}
+			}
 
 			this.room.normalsHelper.add(new THREE.VertexNormalsHelper(meshsolid, 1, 0xff0000, 1));
 
@@ -876,7 +912,11 @@ export class Renderer {
 		mesh.name = source.name;
 		mesh.userData = {
 			kind: "pointofinterest",
+			isSource: true,
 			selectable: true
+		}
+		if (source.directivityFunction) {
+			mesh.userData.directivityFunction = source.directivityFunction;
 		}
 		mesh.position.set(source.posarr[0], source.posarr[1], source.posarr[2])
 		this.sourcesAndReceivers.add(mesh);
@@ -895,6 +935,7 @@ export class Renderer {
 		mesh.name = receiver.name;
 		mesh.userData = {
 			kind: "pointofinterest",
+			isSource: false,
 			selectable: true
 		}
 		mesh.position.set(receiver.posarr[0], receiver.posarr[1], receiver.posarr[2])
@@ -954,17 +995,21 @@ export class Renderer {
 		this.scene.add(this.misclines);
 	}
 
-	addLine(p1, p2, color = [0,0,0,0,0,0]) {
+	setupRays(maxSize = 6000) {
 		let geometry = new THREE.BufferGeometry();
-		let numPoints = 2;
+		let numPoints = maxSize;
 		let positions = new Float32Array(numPoints * 3); // 3 vertices per point
 		let colors = new Float32Array(numPoints * 3); // 3 channels per point
 		geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3).setDynamic(true));
 		geometry.addAttribute('color', new THREE.BufferAttribute(colors, 3).setDynamic(true));
-		p1.concat(p2).forEach((x,i) => {
-			positions[i] = x;
-			colors[i] = color[i];
-		})
+		for (var i = 0, index = 0, l = numPoints; i < l; i++ , index += 3) {
+			positions[index + 0] = 0;
+			positions[index + 1] = 0;
+			positions[index + 2] = 0;
+			colors[index + 0] = Math.random();
+			colors[index + 1] = Math.random();
+			colors[index + 2] = Math.random();
+		}
 		var material = new THREE.LineBasicMaterial({
 			vertexColors: THREE.VertexColors,
 
@@ -972,11 +1017,130 @@ export class Renderer {
 			depthWrite: false
 		});
 
+		geometry.setDrawRange(0, 0);
+		var lines = new THREE.Line(geometry, material);
+		this.rays = new THREE.Group();
+		this.rays.add(lines);
+		this.scene.add(this.rays);
+
+	}
+
+
+	addLine(p1: THREE.Vector3, p2: THREE.Vector3, color: THREE.Color) {
+		let geometry = new THREE.BufferGeometry();
+		let numPoints = 2;
+		let positions = new Float32Array(numPoints * 3); // 3 vertices per point
+		let colors = new Float32Array(numPoints * 3); // 3 channels per point
+		geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3).setDynamic(true));
+		geometry.addAttribute('color', new THREE.BufferAttribute(colors, 3).setDynamic(true));
+
+		positions[0] = p1.x;
+		positions[1] = p1.y;
+		positions[2] = p1.z;
+		colors[0] = color.r;
+		colors[1] = color.g;
+		colors[2] = color.b;
+		positions[3] = p2.x;
+		positions[4] = p2.y;
+		positions[5] = p2.z;
+		colors[3] = color.r;
+		colors[4] = color.g;
+		colors[5] = color.b;
+
+		var material = new THREE.LineBasicMaterial({
+			vertexColors: THREE.VertexColors,
+			// depthTest: false,
+			// depthWrite: false
+		});
 		geometry.setDrawRange(0, 6);
 		var lines = new THREE.Line(geometry, material);
-
 		this.misclines.add(lines);
+	}
+	traceRay(Ro: THREE.Vector3, Rd: THREE.Vector3, order = 5, addline = true, energy = 1, iter=1) {
+		Rd.normalize();
+		const raycaster = new THREE.Raycaster(Ro,Rd);
+		const intersectedObjects = raycaster.intersectObjects(this.room.solid.children);
 
+		// if there was a hit
+		if (intersectedObjects && intersectedObjects.length > 0) {
+			let index = 0;
+			while (index < intersectedObjects.length && intersectedObjects[index].distance == 0) {
+				index++;
+			}
+			if (intersectedObjects[index]) {
+				if (!intersectedObjects[index].object.userData.monteCarloHits) {
+					intersectedObjects[index].object.userData.monteCarloHits = 0;
+				}
+				if (!intersectedObjects[index].object.userData.hits) {
+					intersectedObjects[index].object.userData.hits = [];
+				}
+				if (!intersectedObjects[index].object.userData.totalEnergy) {
+					intersectedObjects[index].object.userData.totalEnergy = 0;
+				}
+				intersectedObjects[index].object.userData.monteCarloHits += 1;
+				const angle = Rd.clone().multiplyScalar(-1).angleTo(intersectedObjects[index].face.normal);
+				//@ts-ignore
+				if (window.DEBUG) {
+					console.log(angle);
+				}
+				let reflectedEnergy = energy * intersectedObjects[index].object.userData.R(angle);
+				let deltaEnergy = energy - reflectedEnergy;
+				intersectedObjects[index].object.userData.hits.push({
+					uv: intersectedObjects[index].uv,
+					pos: intersectedObjects[index].point,
+					incidentEnergy: energy,
+					reflectedEnergy: reflectedEnergy
+				});
+
+				intersectedObjects[index].object.userData.totalEnergy += deltaEnergy;
+				energy = reflectedEnergy;
+
+				addline && (this.addLine(Ro, intersectedObjects[index].point, new THREE.Color(iter / order, iter / order, iter / order)));
+				const N = intersectedObjects[index].face.normal.normalize();
+
+				Rd = Rd.normalize();
+				let Rr = new THREE.Vector3()
+					.subVectors(
+						Rd.clone(),
+						N.multiplyScalar(
+							2 * Rd.clone()
+								.dot(intersectedObjects[index].face.normal)));
+				if (iter < order) {
+					this.traceRay(intersectedObjects[index].point, Rr, order, addline, energy, iter + 1);
+				}
+			}
+		}
+		return energy
+	}
+	setTrackPad(onoff: boolean) {
+		this.trackPad = onoff;
+		this.orbitControls.setTrackPad(this.trackPad);
+	}
+	setupMonteCarlo() {
+		this.monteCarloIntervalIds = {};
+	}
+	startMonteCarlo(source_id: number, order = 10, interval = 50, showlines=true) {
+		const src = this.sourcesAndReceivers.getObjectById(source_id);
+		if (src && !this.monteCarloIntervalIds[source_id]) {
+			src.userData.monteCarloInterval = setInterval((() => this.traceRay(src.position, new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5), order, showlines, 1)).bind(this), interval);
+			this.monteCarloIntervalIds[String(source_id)] = true;
+		}
+	}
+	stopMonteCarlo(source_id: number) {
+		const src = this.sourcesAndReceivers.getObjectById(source_id);
+		if (src && this.monteCarloIntervalIds[source_id]) {
+			window.clearInterval(src.userData.monteCarloInterval);
+			this.monteCarloIntervalIds[String(source_id)] = false;
+		}
+	}
+	stopAllMonteCarlo() {
+		Object.keys(this.monteCarloIntervalIds).forEach(x=>{
+			const src = this.sourcesAndReceivers.getObjectById(Number(x));
+			if (src && src.userData.monteCarloInterval) {
+				window.clearInterval(src.userData.monteCarloInterval);
+				this.monteCarloIntervalIds[x] = false;
+			}
+		})
 	}
 	setupPoints(maxSize = 6000) {
 		this.showReflections = true;
@@ -1028,6 +1192,33 @@ export class Renderer {
 		this.points.children[0].geometry.attributes.position.needsUpdate = true;
 		this.points.visible = this.showReflections;
 	}
+
+	addPoint(pt: THREE.Vector3, col: THREE.Color) {
+
+
+		//@ts-ignore
+		let count = this.points.children[0].geometry.drawRange.count;
+		let index = count === Infinity ? 0 : count * 3;
+		['x', 'y', 'z'].forEach(((component, i) => {
+			//@ts-ignore
+			this.points.children[0].geometry.attributes.position.array[index + i] = pt[component];
+			console.log();
+		}).bind(this));
+		['r', 'g', 'b'].forEach(((component, i) => {
+			//@ts-ignore
+			this.points.children[0].geometry.attributes.color.array[index + i] = col[component];
+		}).bind(this));
+
+		//@ts-ignore
+		this.points.children[0].geometry.setDrawRange(0, index/3+1);
+		//@ts-ignore
+		this.points.children[0].geometry.attributes.position.needsUpdate = true;
+		//@ts-ignore
+		this.points.children[0].geometry.attributes.color.needsUpdate = true;
+
+	}
+
+
 
 
 

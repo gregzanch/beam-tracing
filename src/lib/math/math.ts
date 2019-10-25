@@ -158,6 +158,12 @@ export function dot(a:  number[], b:  number[]): number {
 export function fabs(x) {
 	return Math.abs(x);
 }
+
+export function dist(p1: number[], p2: number[]) {
+	return mag(sub(p2, p1));
+}
+
+
 export function rayTriangleIntersect(
 	orig: number[],
 	dir: number[],
