@@ -418,8 +418,6 @@ export function OrbitControls(object, domElement) {
 		}
 	}
 	function handleKeyDown(event) {
-		console.log( 'handleKeyDown' );
-		console.log(event.keyCode);
 		switch (event.keyCode) {
 			case scope.keys.UP:
 				pan(0, scope.keyPanSpeed);
@@ -529,7 +527,7 @@ export function OrbitControls(object, domElement) {
 				state = STATE.PAN;
 			}
 		}
-		else if (scope.keysPressed.COMMAND) {
+		else if (scope.keysPressed.COMMAND || scope.keysPressed.CONTROL) {
 			if (event.button === scope.commandedMouseButtons.ORBIT) {
 				if (scope.enableRotate === false) return;
 				handleMouseDownRotate(event);

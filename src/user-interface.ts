@@ -1,3 +1,4 @@
+import { Icon } from './fa-list';
 
 export interface EltParams{
 	tag: string;
@@ -64,38 +65,164 @@ export class MainMenu extends DOM{
 }
 
 
-const a = /* hmtl */(`
-	<div class="modal-window hidden">
-		<div class="window-title">Settings</div>
-		<hr>
-		<div class="window-main">
-			<div>
-				<label for="modal-window-position">Window Position</label>
-				<select name="modal-window-position" id="modal-window-position">
-					<option value="center">Center</option>
-					<option value="left">Left</option>
-					<option value="right">Right</option>
-					<option value="top">Top</option>
-					<option value="bottom">Bottom</option>
-				</select>
-			</div>
-			<div>
-				<label for="interface-opacity">Interface Opacity</label>
-				<input type="text" name="interface-opacity" id="interface-opacity">
-			</div>
-		</div>
-	</div>
-`)
-
-function render(html) {
-
+export interface ViewParams{
+	name: string;
+	id: string;
+	icon?: Icon
+}
+export class View extends DOM{
+	root: HTMLElement;
+	id: string;
+	constructor(name: string, id: string, icon?: Icon ) {
+		super();
+		this.id = id;
+		icon = icon || 'fa-circle';
+		this.root = this.create({
+			tag: 'div',
+			children: [
+				{
+					tag: 'div',
+					className: "side-menu-title",
+					children: [
+						{
+							tag: 'i',
+							className: ['fa', icon, 'fa-2x']
+						},
+						{
+							tag: 'label',
+							text: name
+						}
+					]
+				},
+				{
+					tag: 'hr'
+				},
+				{
+					tag: 'div',
+					className: 'side-menu-content-content'
+				}
+			]
+		})
+	}
+	testtime(html:string) {
+		this.root.querySelector('.side-menu-content-content').innerHTML = html;
+	}
+	hide() {
+		if (arguments.length == 0) {
+			!this.root.classList.contains('hidden') && this.root.classList.add('hidden')
+		}
+	}
+	show() {
+		if (arguments.length == 0) {
+			this.root.classList.contains('hidden') && this.root.classList.remove('hidden')
+		}
+	}
 }
 
-`
-<svg height="100" width="100">
-  <circle cx="50" cy="50" r="40" stroke="black" stroke-width="3" fill="red" />
-</svg>
-`
+export interface IndexedViewList{
+	[key: string]: View
+}
+export class SideMenu extends DOM{
+	buttons: IndexedElementList;
+	views: IndexedViewList;
+	root: HTMLElement;
+	state: string;
+	currentView: string;
+	constructor() {
+		super();
+		this.currentView = "";
+		this.state = 'collapsed';
+		this.buttons = {} as IndexedElementList;
+		this.views = {} as IndexedViewList;
+		this.root = this.create({
+			tag: 'nav',
+			id: 'side-menu',
+			moving: 'false',
+			className: 'side-menu',
+			style: 'width:400px',
+			state: 'collapsed',
+			children: [
+				{
+					tag: 'div',
+					className: 'side-menu-drag-handle',
+				},
+				{
+					tag: 'div',
+					className: 'side-menu-content'
+
+				}
+			]
+		});
+		document.body.appendChild(this.root);
+	}
+	collapse() {
+		this.state = 'collapsed';
+		this.root.setAttribute('state', 'collapsed');
+	}
+	expand() {
+		this.state = 'expanded';
+		this.root.setAttribute('state', 'expanded');
+	}
+	seperator() {
+		return this.create({ tag: 'hr', className: "menu-seperator" });
+	}
+	addView(view: View) {
+		this.views[view.id] = view;
+		this.root.querySelector(`.side-menu-content`).appendChild(this.views[view.id].root);
+		this.views[view.id].hide();
+		return this;
+	}
+	setView(view: string | View) {
+		if (typeof view === "string") {
+			view = this.views[view];
+		}
+		if (this.currentView === view.id) {
+			if (this.state === "expanded") {
+				this.collapse();
+			}
+			else {
+				this.expand();
+			}
+		}
+		else if (this.state === "collapsed") {
+			this.expand();
+		}
+		this.hideAllViews();
+		this.currentView = view.id;
+		view.show();
+	}
+	hideAllViews() {
+		Object.keys(this.views).forEach(key => {
+			this.views[key].hide()
+		})
+	}
+	hide(elt: HTMLElement) {
+		if (!elt.classList.contains('hidden')) {
+			elt.classList.add('hidden');
+		}
+	}
+	show(elt: HTMLElement) {
+		if (elt.classList.contains('hidden')) {
+			elt.classList.remove('hidden');
+		}
+	}
+	button(id, icon, text, eventHandlers?: EventHandler[]) {
+		this.buttons[id] = this.create({
+			tag: 'span',
+			className: 'button',
+			id,
+			children: [
+				{ tag: 'i', className: ['fa', icon, 'fa-2x'] },
+				{ tag: 'span', className: 'nav-text', text }
+			]
+		});
+		return this.create({
+			tag: 'li',
+			children: [this.buttons[id]]
+		})
+	}
+}
+
 
 export class ModalWindow extends DOM{
 	inputs: IndexedElementList;
@@ -105,7 +232,9 @@ export class ModalWindow extends DOM{
 		this.inputs = {} as IndexedElementList;
 		this.window = this.create({
 			tag: 'div',
-			className: ["modal-window", "hiddenish"],
+			className: ["modal-window", "hidden"],
+			deltax: '0',
+			deltay: '0',
 			children: [
 				{
 					tag: 'i',
@@ -132,12 +261,17 @@ export class ModalWindow extends DOM{
 			]
 		});
 
+
 		document.body.appendChild(this.window);
 		this.toggleVisibility = this.toggleVisibility.bind(this);
+		this.checkbox = this.checkbox.bind(this);
+		this.slider = this.slider.bind(this);
 		this.window.querySelector('.window-close-button').addEventListener('click', this.toggleVisibility)
+
+
 	}
 	toggleVisibility() {
-		this.window.classList.toggle('hiddenish');
+		this.window.classList.toggle('hidden');
 	}
 	checkbox(name="", id="", className="", checked=false) {
 		const input = this.create({
@@ -167,6 +301,33 @@ export class ModalWindow extends DOM{
 		this.window.querySelector('.window-main').appendChild(div);
 		return input;
 	}
+	slider(name = "", id = "", className = "", min = 0, max = 100, step = 1) {
+		const input = this.create({
+			tag: 'input',
+			type: 'range',
+			name,
+			id,
+			className,
+			min,
+			max,
+			step
+		});
+		const label = this.create({
+			tag: 'label',
+			for: id,
+			text: name
+		});
+		const div = this.create({
+			tag: 'div',
+			children: [
+				input,
+				label,
+			]
+		});
+		this.window.querySelector('.window-main').appendChild(div);
+		return input;
+	}
+
 
 
 }

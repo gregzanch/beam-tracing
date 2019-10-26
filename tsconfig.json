@@ -11,7 +11,7 @@
 
 	},
 
-	"include": ["src/**/*.ts", "src/renderer/transform-controls.js", "src/renderer/effects/OutlineEffect.js"],
+	"include": ["src/**/*.ts", "src/renderer/transform-controls.js", "src/renderer/effects/OutlineEffect.js", "src/lib/exporters/obj.js"],
 	"exclude": [
 		"./node_modules/**/*"
 	],

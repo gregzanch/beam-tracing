@@ -162,7 +162,8 @@ export class DeviceQueryAlert{
 				document.removeEventListener("mousewheel", this.mouseHandle, false);
 				document.removeEventListener("DOMMouseScroll", this.mouseHandle, false);
 				this.parent.remove();
-			}).bind(this), 500)
+				this.onComplete();
+			}).bind(this), 50)
 			if (!evt) evt = event;
 			var direction = (evt.detail < 0 || evt.wheelDelta > 0) ? 1 : -1;
 
@@ -197,7 +198,7 @@ export class DeviceQueryAlert{
 		this.devicequeryalert.setAttribute('showing', "false")
 	}
 	onComplete() {
-
+		console.log(this);
 	}
 
 }

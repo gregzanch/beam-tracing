@@ -1,6 +1,6 @@
 import { Triangle } from './../triangle';
 
-
+export * from './triangle-area';
 
 export * from './aabb';
 export * from './planeEquation';

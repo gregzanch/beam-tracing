@@ -5,7 +5,7 @@ import { DomBugger } from './dombugger';
 import * as THREE from 'three';
 import { OrbitControls } from './orbit-controls';
 import { TransformControls } from './transform-controls.js';
-import { map, max, min, clamp, norm, reflect } from '../lib/math/math';
+import { map, max, min, clamp, norm, reflect, triangleArea } from '../lib/math/math';
 import { PickHelper } from './pick-helper';
 import hotkeys from 'hotkeys-js';
 import { Source } from '../lib/source';
@@ -72,7 +72,7 @@ export class Renderer {
 
 	helpers: THREE.Group;
 
-	fov: number = 40;
+	fov: number = 20;
 	hoverOpacity: number = 0.5;
 	regularOpacity: number = 0.3;
 	aspect: number = window.innerWidth / window.innerHeight;
@@ -189,6 +189,9 @@ export class Renderer {
 		this.setTrackPad = this.setTrackPad.bind(this);
 		this.setupRays = this.setupRays.bind(this);
 		this.setupMonteCarlo = this.setupMonteCarlo.bind(this);
+		this.startAllMonteCarlo = this.startAllMonteCarlo.bind(this);
+		this.Float32BufferAttributeToTriangles = this.Float32BufferAttributeToTriangles.bind(this);
+		this.calculateSurfaceArea = this.calculateSurfaceArea.bind(this);
 		this.setup();
 		this.setTrackPad(false);
 		this.animate();
@@ -353,7 +356,7 @@ export class Renderer {
 		this.helpers.add(axialHelper);
 
 		this.gridSize = 1000;
-		this.gridDivisions = 100;
+		this.gridDivisions = 250;
 		this.gridHelper = new THREE.GridHelper(this.gridSize, this.gridDivisions);
 		const material = (this.gridHelper.material as THREE.LineBasicMaterial);
 		material.transparent = true;
@@ -597,6 +600,28 @@ export class Renderer {
 			console.log(this.orbitControls)
 			this.orbitControls.target.set(state.target.x, state.target.y, state.target.z);
 		}
+	}
+	Float32BufferAttributeToTriangles(f32ba: THREE.Float32BufferAttribute) {
+		const { count, itemSize, array } = f32ba;
+		let iter = 0;
+		let tris = [];
+		const coord = ['x', 'y', 'z'];
+		for (let i = 0; i < count / 3; i++){
+			tris.push([]);
+			for (let j = 0; j < 3; j++){
+				tris[i].push(new THREE.Vector3);
+				for (let k = 0; k < itemSize; k++){
+					tris[i][j][coord[k]] = array[iter];
+					iter++;
+				}
+
+			}
+		}
+		return tris;
+	}
+	calculateSurfaceArea(mesh: THREE.Mesh) {
+		const tris = this.Float32BufferAttributeToTriangles((mesh.geometry as THREE.BufferGeometry).getAttribute('position') as THREE.Float32BufferAttribute);
+		return tris.map(x => triangleArea(x[0], x[1], x[2])).reduce((a, b) => a + b);.
 	}
 	update() {
 		switch (this.currentProcess) {
@@ -1058,7 +1083,7 @@ export class Renderer {
 	}
 	traceRay(Ro: THREE.Vector3, Rd: THREE.Vector3, order = 5, addline = true, energy = 1, iter=1) {
 		Rd.normalize();
-		const raycaster = new THREE.Raycaster(Ro,Rd);
+		const raycaster = new THREE.Raycaster(Ro,Rd,);
 		const intersectedObjects = raycaster.intersectObjects(this.room.solid.children);
 
 		// if there was a hit
@@ -1141,6 +1166,16 @@ export class Renderer {
 				this.monteCarloIntervalIds[x] = false;
 			}
 		})
+	}
+	startAllMonteCarlo(order = 10, interval = 50, showlines = true) {
+		const srcs = this.sourcesAndReceivers.children;
+		if (srcs && srcs.length > 0) {
+			srcs.forEach((x,i,a) => {
+				a[i].userData.monteCarloInterval = setInterval((() => this.traceRay(x.position, new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5), order, showlines, 1)).bind(this), interval);
+				this.monteCarloIntervalIds[String(x.id)] = true;
+			})
+
+		}
 	}
 	setupPoints(maxSize = 6000) {
 		this.showReflections = true;
@@ -1245,16 +1280,18 @@ export class Renderer {
 		const c = new THREE.Vector3(s.tris[0].c.x, s.tris[0].c.y, s.tris[0].c.z);
 		const ab = new THREE.Vector3().subVectors(b, a);
 		const ac = new THREE.Vector3().subVectors(c, a);
-		const cp = new THREE.Vector3().crossVectors(ab, ac).normalize();
+		const cp = new THREE.Vector3().crossVectors(ab, ac).normalize().multiplyScalar(-1);
 
-		const newloc = center.clone().addScaledVector(cp, 15);
+		const dist = this.camera.position.distanceTo(center);
+
+		const newloc = center.clone().addScaledVector(cp, dist);
 
 
 
 		this.camera.lookAt(center);
 
-		this.easeCameraTo(newloc, cp.multiplyScalar(-1), center, 60, (() => {
-			this.setOrthographicCamera(true);
+		this.easeCameraTo(newloc, cp.multiplyScalar(-1), center, 20, (() => {
+			this.setOrthographicCamera(false);
 			this.finishCurrentProcess();
 		}).bind(this));
 

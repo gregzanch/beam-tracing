@@ -4,7 +4,7 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "start": "webpack-dev-server --config webpack.config.js --debug --devtool eval-cheap-module-source-map --output-pathinfo"
+    "start": "webpack-dev-server --config webpack.config.js --debug --devtool eval-cheap-module-source-map --output-pathinfo --disable-host-check --useLocalIp"
   },
   "devDependencies": {
     "@babel/core": "^7.6.0",
