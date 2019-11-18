@@ -55,6 +55,7 @@ export class PickHelper {
 				index = kinds.indexOf("geometry");
 			}
 
+
 			if (intersectedObjects[index].object.id !== this.pickedObjectID) {
 				if (this.pickedObject) {
 					// restore the opacity of the previously hovered object

@@ -1,7 +1,7 @@
 
-var cross = require('gl-vec3/cross');
-var dot = require('gl-vec3/dot');
-var sub = require('gl-vec3/subtract');
+var cross = require('./cross');
+var dot = require('./dot');
+var sub = require('./sub');
 
 export function raytrix(rayOrigin, ray, triangle, opts?) {
 	opts = opts || {}

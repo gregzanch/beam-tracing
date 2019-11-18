@@ -7,9 +7,9 @@ import { BufferGeometry, PointLight } from 'three';
 import { Polygon } from './polygon';
 import { peqp } from './process/util/peqp';
 
-const sub3 = require('gl-vec3/sub');
+// const sub3 = require('gl-vec3/sub');
 
-import * as GPU from "gpu.js/dist/gpu-browser";
+// import * as GPU from "gpu.js/dist/gpu-browser";
 
 
 export class Reflection {
@@ -64,9 +64,9 @@ export class BeamTracer{
 				this._polygons.push(new Polygon(this._geometry[i]));
 			}
 		}
-		this._webgl = new GPU({
-			mode: 'gpu'
-		});
+		// this._webgl = new GPU({
+		// 	mode: 'gpu'
+		// });
 	}
 
 	walk(imageSource, depth=0, index=0) {
@@ -99,7 +99,7 @@ export class BeamTracer{
 		let rays = [];
 		// for each polygon
 		this._polygons.forEach((poly: Polygon) => {
-			rays.push(sub3([], this.sources[0].posarr, reflect(this.receivers[0].posarr, poly.pleq, poly.n)));
+			// rays.push(sub3([], this.sources[0].posarr, reflect(this.receivers[0].posarr, poly.pleq, poly.n)));
 		});
 		return rays;
 	}
@@ -249,10 +249,10 @@ export class BeamTracer{
 			const ref = reflect(this.receivers[0].posarr, poly.pleq, poly.n);
 			reflections.push(ref);
 
-			let ray = sub3([], this.sources[0].posarr, ref);
+			// let ray = sub3([], this.sources[0].posarr, ref);
 			poly.tris.forEach(tri => {
 				// find the intersection of each each tri
-				var itx = raytrix(this.sources[0].posarr, ray, tri);
+				var itx = raytrix(this.sources[0].posarr, [], tri);
 				if (!peqp(itx, [0, 0, 0])) {
 					if (itx[0] > 100) {
 						console.log(itx)

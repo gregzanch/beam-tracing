@@ -1,7 +1,7 @@
 import { Polygon } from "./polygon";
 import { Source } from './source';
 import { Receiver } from './receiver';
-import { BSP } from './bsp';
+
 import { Element } from './element';
 import { sub,add,scale } from './math/math';
 
@@ -9,20 +9,18 @@ export interface RoomConstructorParams{
 	elements?: Element[];
 	sources?: Source[];
 	receivers?: Receiver[];
-	bsp?: BSP;
 }
 
 export class Room {
 	public elements: Element[];
 	public sources: Source[];
 	public receivers: Receiver[];
-	public bsp: BSP;
+
 	constructor(params?: RoomConstructorParams) {
 		if (params) {
 			if (params.elements) this.elements = params.elements;
 			if (params.sources) this.sources = params.sources;
 			if (params.receivers) this.receivers = params.receivers;
-			if (params.bsp) this.bsp = params.bsp;
 		}
 	}
 	addPolygon(poly: Polygon, color: number[]) {
@@ -34,7 +32,7 @@ export class Room {
 		for (let i = 0; i < this.elements.length; i++) {
 			polygons.push(this.elements[i].polygon);
 		}
-		this.bsp = new BSP();
+
 		// this.bsp.constructHierarchy(polygons[0], polygons.length);
 	}
 	reset() {
@@ -85,7 +83,7 @@ export class Room {
 	}
 
 	getBSP() {
-		return this.bsp;
+
 	}
 }
 

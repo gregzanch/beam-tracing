@@ -2,7 +2,6 @@ import { Receiver } from "./receiver";
 import { Source } from './source';
 import {Room} from './room'
 import { Beam } from './beam';
-import { BSP } from './bsp';
 
 
 import { Vec2, Vec3, Vec4 } from "./vector";

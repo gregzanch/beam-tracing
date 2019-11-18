@@ -1,27 +1,18 @@
-
-import { EventManager } from './../events/eventManager';
-import { reflectionCoefficient } from '../lib/acoustics/reflection-coefficient';
-import { DomBugger } from './dombugger';
-import * as THREE from 'three';
-import { OrbitControls } from './orbit-controls';
-import { TransformControls } from './transform-controls.js';
-import { map, max, min, clamp, norm, reflect, triangleArea } from '../lib/math/math';
-import { PickHelper } from './pick-helper';
 import hotkeys from 'hotkeys-js';
+import * as THREE from 'three';
+import { EventManager } from './../events/eventManager';
+import { NumberInputEvent, TextInputEvent, TargetedInputEvent } from './event';
+import { reflectionCoefficient } from '../lib/acoustics/reflection-coefficient';
+import { OrbitControls } from './orbit-controls';
+import { triangleArea, isFiniteAndPositive } from '../lib/math/math';
+import { PickHelper } from './pick-helper';
 import { Source } from '../lib/source';
 import { Receiver } from '../lib/receiver';
-const Emitter = require('tiny-emitter');
-
-const STLLoader = require('three-stl-loader')(THREE);
+import { InfoDiv, View } from '../user-interface';
 import OBJLoader from '../lib/parsers/obj';
-import { SphereBufferGeometry, HemisphereLight, Geometry } from 'three';
-import { type } from 'os';
 
 
 OBJLoader(THREE);
-const GLTFLoader = require('three-gltf-loader')
-const ColladaLoader = require('three-collada-loader');
-
 const edges = require('./edges.js');
 
 export interface RoomGroup{
@@ -32,10 +23,8 @@ export interface RoomGroup{
 	normalsHelper: THREE.Group;
 }
 
-//@ts-ignore
-window.THREE = THREE;
 
-
+Object.assign(window, { THREE });
 
 interface RendererParams{
 	cameraPos?: THREE.Vector3;
@@ -46,13 +35,51 @@ export interface IndexedObject<T>{
 	[id: string]: T
 }
 
+interface RendererSettings{
+	[setting: string]: string | number | boolean;
+}
 
+class Intersection{
+	pos: number[];
+	angle: number;
+	surfaceID: number;
+	constructor(pos: THREE.Vector3, angle: number, surfaceID: number) {
+		this.pos = [pos.x,pos.y,pos.z];
+		this.angle = angle;
+		this.surfaceID = surfaceID;
+ 	}
+}
+
+class Ray{
+	origin: number[];
+	intersections: Intersection[];
+	hitRecievers: number[]
+	constructor(origin: THREE.Vector3) {
+		this.origin = [origin.x, origin.y, origin.z];
+		this.intersections = [];
+		this.hitRecievers = [];
+	}
+}
+
+interface Selection{
+	objects: THREE.Mesh[];
+	needsUpdate: boolean; 
+}
+interface NextSelection{
+	objects: THREE.Mesh[];
+	append: boolean; 
+}
+
+interface addRecieverParams {
+	radius?: number;
+	name?: string;
+	Rd?: THREE.Vector3;
+}
 
 export class Renderer {
 	loaders: {};
 
 	orbitControls;
-	transformControls;
 	camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
 	orthocamera: THREE.OrthographicCamera;
 	isCameraOrtho: boolean = false;
@@ -72,18 +99,6 @@ export class Renderer {
 
 	helpers: THREE.Group;
 
-	fov: number = 20;
-	hoverOpacity: number = 0.5;
-	regularOpacity: number = 0.3;
-	aspect: number = window.innerWidth / window.innerHeight;
-	near: number = 0.1;
-	far: number = 1000;
-
-	renderRequested: any = undefined;
-
-	pickPosition: { x: number, y: number } = { x: 0, y: 0 }
-	pickHelper: PickHelper = new PickHelper(this.regularOpacity, this.hoverOpacity, false, false);
-
 	sourcesAndReceivers: THREE.Group;
 	sources: THREE.Group;
 	receivers: THREE.Group;
@@ -93,10 +108,6 @@ export class Renderer {
 
 	updateCallbacks: [];
 	dragChangedCallbacks: [];
-
-	dombugger: DomBugger;
-
-	showReflections: boolean;
 
 	easeCameraTarget;
 	easeCameraFocus;
@@ -108,22 +119,52 @@ export class Renderer {
 	easingCamera;
 	easeCameraCurrentFocus;
 
-	quatHelper: THREE.Group;
+
 	misclines: THREE.Group;
+
 	constructorParams: RendererParams;
 
 	_eventManager: EventManager;
 
-	gridSize: number;
-	gridDivisions: number;
-	gridHelper: THREE.GridHelper;
+	addLines: boolean = false;
 
 	monteCarloIntervalIds: IndexedObject<boolean>;
 
 	rays: THREE.Group;
+	prevRayIndex: number = 0;
+	prevRayIndexPos: number = 0;
+	lastRayIndexNumber: number = 0;
+
+
+	renderRequested: any = undefined;
+	pickPosition: { x: number, y: number } = { x: 0, y: 0 }
 
 	trackPad: boolean;
+	fov: number = 20;
+	hoverOpacity: number = 0.5;
+	regularOpacity: number = 0.3;
+	aspect: number = window.innerWidth / window.innerHeight;
+	near: number = 0.1;
+	far: number = 1000;
 
+	gridSize: number;
+	gridDivisions: number;
+	pickHelper: PickHelper = new PickHelper(this.regularOpacity, this.hoverOpacity, false, false);
+	gridHelper: THREE.GridHelper;
+	showReflections: boolean = false;
+	settings: RendererSettings;
+
+	infoDiv: InfoDiv;
+
+	ObjectsView: View;
+	GeometryView: View;
+
+	tfrays: Ray[];
+
+	shouldRender: boolean = true;
+
+	currentSelection: Selection;
+	nextSelection: NextSelection; 
 	constructor(params: RendererParams) {
 		this.modes = {
 			selectingGeometry: false
@@ -147,9 +188,6 @@ export class Renderer {
 		this.requestRenderIfNotRequested = this.requestRenderIfNotRequested.bind(this);
 		this.addGeometry = this.addGeometry.bind(this);
 		this.OBJHandler = this.OBJHandler.bind(this);
-		this.STLHandler = this.STLHandler.bind(this);
-		this.GLTFHandler = this.GLTFHandler.bind(this);
-		this.ColladaHandler = this.ColladaHandler.bind(this);
 		this.setPickPosition = this.setPickPosition.bind(this);
 		this.clearPickPosition = this.clearPickPosition.bind(this);
 		this.mouseDownHandler = this.mouseDownHandler.bind(this);
@@ -162,23 +200,17 @@ export class Renderer {
 		this.setupProcesses = this.setupProcesses.bind(this);
 		this.setupSourcesAndReceivers = this.setupSourcesAndReceivers.bind(this);
 		this.setupCallbacks = this.setupCallbacks.bind(this);
-		this.setupBeams = this.setupBeams.bind(this);
-		this.setupPoints = this.setupPoints.bind(this);
-		this.updateBeams = this.updateBeams.bind(this);
-		this.updatePoints = this.updatePoints.bind(this);
-		this.addPoint = this.addPoint.bind(this);
 		this.dragChanged = this.dragChanged.bind(this);
-		this.setupTransformControls = this.setupTransformControls.bind(this);
+		this.getTotalRaysShot = this.getTotalRaysShot.bind(this);
+		this.getRaysShot = this.getRaysShot.bind(this);
 		this.attachUpdateCallback = this.attachUpdateCallback.bind(this);
 		this.attachDragChangedCallback = this.attachDragChangedCallback.bind(this);
 		this.exitAllProcesses = this.exitAllProcesses.bind(this);
 		this.finishCurrentProcess = this.finishCurrentProcess.bind(this);
-		this.setupDomBugger = this.setupDomBugger.bind(this);
+
 		this.lookAtSurface = this.lookAtSurface.bind(this);
 		this.setupEaseCamera = this.setupEaseCamera.bind(this);
 		this.easeCameraTo = this.easeCameraTo.bind(this);
-		this.setupQuatHelper = this.setupQuatHelper.bind(this);
-		this.addQuatHelper = this.addQuatHelper.bind(this);
 		this.mouseupHandler = this.mouseupHandler.bind(this);
 		this.toggleVertexNormals = this.toggleVertexNormals.bind(this);
 		this.toggleGreyscaleSurfaceColor = this.toggleGreyscaleSurfaceColor.bind(this);
@@ -192,14 +224,20 @@ export class Renderer {
 		this.startAllMonteCarlo = this.startAllMonteCarlo.bind(this);
 		this.Float32BufferAttributeToTriangles = this.Float32BufferAttributeToTriangles.bind(this);
 		this.calculateSurfaceArea = this.calculateSurfaceArea.bind(this);
+		this.setFog = this.setFog.bind(this);
+		this.clearRays = this.clearRays.bind(this);
+		this.clearUserData = this.clearUserData.bind(this);
+		this.resetTrace = this.resetTrace.bind(this);
+		this.getSurfaces = this.getSurfaces.bind(this);
+		this.getHitPercentages = this.getHitPercentages.bind(this);
+		this.setObjectsView = this.setObjectsView.bind(this);
+		this.setGeometryView = this.setGeometryView.bind(this);
+		this.setupSelections = this.setupSelections.bind(this);
+		this.select = this.select.bind(this);
+		this.tfrays = [];
 		this.setup();
-		this.setTrackPad(false);
 		this.animate();
-		// this.update();
-		// this.render();
-		//@ts-ignore
-		window.r = this;
-
+		Object.assign(window, { r: this });
 	}
 	setup() {
 		this.setupRenderer();
@@ -208,7 +246,6 @@ export class Renderer {
 		this.setupScene();
 		this.setupRoom();
 		this.setupLighting();
-
 		this.setupProcesses();
 		this.setupEventListeners();
 		this.setupHotKeys();
@@ -216,51 +253,59 @@ export class Renderer {
 		this.setupHelpers();
 		this.setupSourcesAndReceivers();
 		this.setupCallbacks();
-		this.setupTransformControls();
-		this.setupBeams(6000);
-		this.setupPoints(6000);
-		this.setupRays(6000);
-		this.setupDomBugger();
-		this.setupQuatHelper();
+		this.setupRays(1000000);
+		this.setupSelections();
 		this.setupMonteCarlo();
+		this.setupInfoDiv();
 		this.render();
+
+		
+
+	}
+	setupSelections() {
+		this.nextSelection = {
+			objects: [],
+			append: false,
+		} as NextSelection;
+		this.currentSelection = {
+			objects: [],
+			needsUpdate: false
+		} as Selection;
+	}
+	setObjectsView(ObjectsView: View) {
+		this.ObjectsView = ObjectsView;
+	}
+	setGeometryView(GeometryView: View) {
+		this.GeometryView = GeometryView;
+	}
+	setupInfoDiv() {
+		this.infoDiv = new InfoDiv('main-info-div')
+			.addStyle({
+				'bottom': '0em',
+				'left': '4em',
+				'font-size': '9pt',
+				'font-family': `'Titillium Web', sans-serif`,
+			})
+			.parent(document.body)
+			.updateText('ready');
+	}
+	readyToStart() {
+		return (this.sourcesAndReceivers.children.length > 0);
+	}
+	updateStatusText(text: string) {
+		this.infoDiv.updateText(text);
 	}
 
-	setupQuatHelper() {
-		this.quatHelper = new THREE.Group()
-		this.scene.add(this.quatHelper);
-	}
 	setupEaseCamera() {
 		this.easingCamera = false;
 	}
-	setupDomBugger() {
-		let container = document.createElement('div');
-		container.setAttribute('class', 'dombugger-container');
-		document.body.appendChild(container);
-		this.dombugger = new DomBugger(document.querySelector('.dombugger-container'));
-		// this.dombugger.watch('random', 1000, () => Math.random());
-	}
-	setupTransformControls() {
-		this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
-		this.transformControls.addEventListener('change', this.render);
-		this.transformControls.addEventListener('dragging-changed', this.dragChanged);
-		this.scene.add(this.transformControls);
-	}
+
+
 	setupCallbacks() {
 		this.updateCallbacks = [];
 		this.dragChangedCallbacks = [];
 	}
 	setupSourcesAndReceivers() {
-		// this.sources = new THREE.Group();
-		// this.sources.name = "sources";
-		// this.sources.userData = {
-		// 	selectable: true
-		// }
-		// this.receivers = new THREE.Group();
-		// this.receivers.name = "sources";
-		// this.receivers.userData = {
-		// 	selectable: true
-		// }
 		this.sourcesAndReceivers = new THREE.Group();
 		this.scene.add(this.sourcesAndReceivers);
 	}
@@ -269,43 +314,61 @@ export class Renderer {
 	}
 	toggleOrthographicCamera() {
 		this.setOrthographicCamera(!this.isCameraOrtho);
+		
 	}
 	startProcess(proc) {
 		this.exitAllProcesses();
 		this.currentProcess = proc;
+		this.updateStatusText(
+			`started process '${this.currentProcess}'`
+		);
+
 	}
 	setupHotKeys() {
 		hotkeys('f','base', ()=>this.startProcess('select_surface'))
 		hotkeys('o', 'base', this.toggleOrthographicCamera);
-		hotkeys('l', 'base', ()=>this.startProcess('lookat'));
-		hotkeys('esc', 'all', this.exitAllProcesses);
+		hotkeys('l', 'base', () => this.startProcess('lookat'));
+		hotkeys('esc', 'all', () => {
+			this.exitAllProcesses();
+			this.startProcess('base')
+		});
 		hotkeys('enter', 'all', this.finishCurrentProcess);
 		hotkeys.setScope('base');
 
 	}
 	exitAllProcesses() {
-		if (this.transformControls) {
-			// const previousPosition = this.transformControls.object.userData.previousPosition;
-			// this.transformControls.object.position.set(previousPosition.x, previousPosition.y, previousPosition.z);
-			// // console.log(previousPosition);
-			this.transformControls.detach();
-			this.transformControls.enabled = false;
-		}
+		this.updateStatusText(
+			`finished process '${this.currentProcess}'`
+		);
 		this.currentProcess = "base";
 	}
-	finishCurrentProcess() {
-		if (this.transformControls) {
-			this.transformControls.detach();
-			this.transformControls.enabled = false;
+	clearUserData() {
+		if (this.room && this.room.solid.children.length > 0) {
+			this.room.solid.children.forEach(x => {
+				x.userData.totalEnergy = 0;
+				x.userData.monteCarloHits = 0;
+				x.userData.hits = [];
+			})
 		}
+	}
+	clearRays() {
+		(this.misclines.children.length > 0) && this.scene.remove(this.scene.getObjectById(this.misclines.id))
+		this.misclines = new THREE.Group();
+		this.scene.add(this.misclines);
+	}
+	resetTrace() {
+		this.clearRays();
+		this.clearUserData();
+	}
+	finishCurrentProcess() {
+		this.updateStatusText(
+			`finished process '${this.currentProcess}'`
+		);
 		this.currentProcess = "base";
 	}
 	touchStartHandler(event) {
-		// event.preventDefault();
-		// this.setPickPosition(event.touches[0]);
 	}
 	touchMoveHandler(event) {
-		// this.setPickPosition(event.touches[0]);
 	}
 	getCanvasRelativePosition(event) {
 		const rect = this.canvas.getBoundingClientRect();
@@ -320,7 +383,6 @@ export class Renderer {
 		this.pickPosition.y = (pos.y / this.canvas.clientHeight) * -2 + 1;  // note we flip Y
 	}
 	clearPickPosition() {
-
 		this.pickPosition.x = -100000;
 		this.pickPosition.y = -100000;
 	}
@@ -341,6 +403,7 @@ export class Renderer {
 	setupHelpers() {
 		this.helpers = new THREE.Group();
 		this.helpers.name = "helpers";
+
 		this.helpers.userData = {
 			kind: "helpers",
 			selectable: false
@@ -436,22 +499,10 @@ export class Renderer {
 	}
 	setupLoaders() {
 		this.loaders = {
-			'stl': {
-				loader: STLLoader,
-				handler: this.STLHandler
-			},
 			'obj': {
 				//@ts-ignore
 				loader: THREE.OBJLoader,
 				handler: this.OBJHandler
-			},
-			'gltf': {
-				loader: GLTFLoader,
-				handler: this.GLTFHandler
-			},
-			'dae': {
-				loader: ColladaLoader,
-				handler: this.ColladaHandler
 			}
 		}
 	}
@@ -467,9 +518,7 @@ export class Renderer {
 		this.canvas.addEventListener('touchend', this.clearPickPosition);
 		window.addEventListener('resize', this.onResize, false);
 	}
-	mouseupHandler(e) {
-		window.localStorage.setItem('cameraState', JSON.stringify(this.getCameraState()))
-	}
+
 	setupOrbitControls() {
 		this.orbitControls = new OrbitControls(this.camera, this.canvas);
 		this.orbitControls.target.set(0, 0, 0);
@@ -477,22 +526,49 @@ export class Renderer {
 	}
 	setupLighting() {
 		this.lighting = new THREE.Group();
-		// this.lighting.add();
+		// // this.lighting.add();
 		const hemisphere = new THREE.HemisphereLight(0xffffff, 0x020202, 100);
+		// const hemisphereHelper = new THREE.HemisphereLightHelper(hemisphere, 4);
+		// this.scene.add(hemisphereHelper)
 		this.lighting.add(hemisphere);
-		this.lighting.add(this.makeDirectionalLight({
-			x: -1,
-			y: 2,
-			z: 4
-		}));
-		this.lighting.add(this.makeDirectionalLight({
-			x: -1,
-			y: -1,
-			z: -2
-		}));
+		// const directionalLight1 = this.makeDirectionalLight({
+		// 	x: -1,
+		// 	y: 2,
+		// 	z: 4
+		// })
+		// this.lighting.add(directionalLight1);
+		// const directionalLight1Helper = new THREE.DirectionalLightHelper(directionalLight1);
+		// const directionalLight2 = this.makeDirectionalLight({
+		// 	x: -1,
+		// 	y: -1,
+		// 	z: -2
+		// });
+		// this.lighting.add(directionalLight2);
+		// const directionalLight2Helper = new THREE.DirectionalLightHelper(directionalLight2);
 		this.scene.add(this.lighting);
+		// this.scene.add(directionalLight1Helper);
+		// this.scene.add(directionalLight2Helper);
 	}
 	setupRoom() {
+		if (this.scene) {
+			if (this.room) {
+				if (this.room.solid) {
+					this.scene.remove(this.room.solid);
+				}
+				if (this.room.wire) {
+					this.scene.remove(this.room.wire);
+				}
+				if (this.room.edge) {
+					this.scene.remove(this.room.edge);
+				}
+				if (this.room.normalsHelper) {
+					this.scene.remove(this.room.normalsHelper);
+				}
+				if (this.room.solid) {
+					this.scene.remove(this.room.solid);
+				}
+			}
+		}
 		this.room = {
 			solid: new THREE.Group(),
 			wire: new THREE.Group(),
@@ -502,13 +578,20 @@ export class Renderer {
 		}
 		this.scene.add(this.room.solid, this.room.wire, this.room.edge, this.room.normalsHelper);
 	}
-
+	setBackground(color: string) {
+		this.scene.background = new THREE.Color(color);
+	}
+	setFog(amount) {
+		//@ts-ignore
+		this.scene.fog.density = amount;
+	}
+	setFogColor(color: string) {
+		this.scene.fog.color = new THREE.Color(color);
+	}
 	setupScene() {
 		this.scene = new THREE.Scene();
-		this.scene.fog = new THREE.FogExp2(0xffffff, 0.0055);
-
-		this.scene.background = new THREE.Color(0xf0f0f0);
-
+		this.scene.fog = new THREE.FogExp2(0x424242, 0.0015);
+		this.scene.background = new THREE.Color(0xc0c0c0);
 	}
 	setupCamera() {
 		this.camera = new THREE.PerspectiveCamera(this.fov, this.aspect, this.near, this.far);
@@ -595,10 +678,13 @@ export class Renderer {
 	}
 	setCameraState(state) {
 		this.camera.position.set(state.position.x, state.position.y, state.position.z);
-		this.camera.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z, "XYZ");
+		// this.camera.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z, "XYZ");
+		let matrix = new THREE.Matrix4();
+		matrix.elements = state.object.matrix;
+		this.camera.setRotationFromMatrix(matrix);
 		if(this.orbitControls){
 			console.log(this.orbitControls)
-			this.orbitControls.target.set(state.target.x, state.target.y, state.target.z);
+			// this.orbitControls.target.set(state.target.x, state.target.y, state.target.z);
 		}
 	}
 	Float32BufferAttributeToTriangles(f32ba: THREE.Float32BufferAttribute) {
@@ -621,7 +707,7 @@ export class Renderer {
 	}
 	calculateSurfaceArea(mesh: THREE.Mesh) {
 		const tris = this.Float32BufferAttributeToTriangles((mesh.geometry as THREE.BufferGeometry).getAttribute('position') as THREE.Float32BufferAttribute);
-		return tris.map(x => triangleArea(x[0], x[1], x[2])).reduce((a, b) => a + b);.
+		return tris.map(x => triangleArea(x[0], x[1], x[2])).reduce((a, b) => a + b);
 	}
 	update() {
 		switch (this.currentProcess) {
@@ -632,10 +718,14 @@ export class Renderer {
 				}
 				break;
 			case "lookat":
-					this.pickHelper.pick(this.pickPosition, this.room.solid.children, this.camera);
+				this.pickHelper.pick(this.pickPosition, this.room.solid.children, this.camera);
 				break;
 			case "select_surface":
 				this.pickHelper.pick(this.pickPosition, this.room.solid.children, this.camera);
+				const pick = this.pickHelper.getPick();
+				if (pick) {
+					this.updateStatusText(pick.name);
+				}
 				break;
 			default:
 				this.pickHelper.pick(this.pickPosition, this.sourcesAndReceivers.children, this.camera);
@@ -662,34 +752,14 @@ export class Renderer {
 			//@ts-ignore
 			x();
 		})
-
-		// this.receivers.children.forEach(x => {
-		// 	x.updateWorldMatrix(true, false);
-		// 	const tempvec = new THREE.Vector3();
-		// 	x.getWorldPosition(tempvec);
-		// 	tempvec.project(this.camera);
-
-		// })
-
-
-
-		// // get the normalized screen coordinate of that position
-		// // x and y will be in the -1 to +1 range with x = -1 being
-		// // on the left and y = -1 being on the bottom
-		// tempV.project(camera);
-
-		// // convert the normalized position to CSS coordinates
-		// const x = (tempV.x * .5 + .5) * canvas.clientWidth;
-		// const y = (tempV.y * -.5 + .5) * canvas.clientHeight;
-
-		// // move the elem to that position
-		// elem.style.transform = `translate(-50%, -50%) translate(${x}px,${y}px)`;
-
+		
 	}
 
 	render() {
 		// this.resizeRendererToDisplaySize();
-		this.renderer.render(this.scene,this.camera);
+		if (this.shouldRender) {
+			this.renderer.render(this.scene,this.camera);
+		}
 	}
 	setOrthographicCamera(OrthographicCamera: boolean) {
 
@@ -721,7 +791,7 @@ export class Renderer {
 		this.camera.position.set(p.x, p.y, p.z);
 
 		this.setupOrbitControls();
-
+		this.updateStatusText(`ortho ${this.isCameraOrtho}`)
 	}
 	getDistanceFromTarget() {
 		return this.camera.position.distanceTo(this.orbitControls.target);
@@ -745,62 +815,114 @@ export class Renderer {
 		}
 	}
 
-	addGeometry(url, name = "") {
-		let filetype = url.split('.').slice(-1);
+	addGeometry(url:string, filetype?:string) {
+
+		filetype = filetype || url.split('.').slice(-1)[0];
 
 		const loader = this.loaders[filetype] ? this.loaders[filetype].loader : false;
 		const handler = this.loaders[filetype] ? this.loaders[filetype].handler : false;
 		if (!loader) return
 		return new Promise((resolve, reject) => {
 			new loader().load(url, function (res) {
-				handler(res, resolve, reject)
+				if (!res) {
+					reject("loader couldn't load the file that was supposed to be loaded lol")
+				}
+				else {
+					handler(res, resolve, reject)
+				}
 			})
 		});
 	}
+	getHitPercentages() {
+		if (this.room) {
+			let total = this.room.solid.children.map(x => x.userData.monteCarloHits).reduce((a, b) => a + b);
+			if (total > 0) {
+				return this.room.solid.children.map(x => x.userData.monteCarloHits / total * 100);
+			}
+			return
+		}
+		return
+	}
+	clearNextSelection() {
+		this.nextSelection.objects.forEach(x => (x.children[0].visible = false));
+		this.nextSelection.objects = [];
+		this.nextSelection.append = false;
+		this.currentSelection.objects.forEach(x => x.children[0].visible = false)
+		this.currentSelection.objects = [];
+		this.currentSelection.needsUpdate = true;
+	}
+	setNextSelection(pick: THREE.Mesh|THREE.Mesh[], append: boolean = false) {
+		this.nextSelection.objects = pick instanceof Array ? pick : [pick];
+		this.nextSelection.append = append;
+        this.currentSelection.needsUpdate = true;
+	}
+	select(pick: THREE.Mesh, append: boolean = false) {
+
+
+	}
+
+	mouseupHandler(e) {
+		if (this.currentSelection.needsUpdate) {
+			if (this.nextSelection.append) {
+				for (let i = 0; i < this.nextSelection.objects.length; i++){
+					this.currentSelection.objects.push(this.nextSelection.objects[i]);
+					this.nextSelection.objects[i].children[0].visible = true;
+				}
+			}
+			else {
+				this.currentSelection.objects.forEach(x => {
+					x.children[0].visible = false;
+				})
+				this.currentSelection.objects = this.nextSelection.objects;
+
+				this.currentSelection.objects.forEach(x => {
+					x.children[0].visible = true;
+				})
+			}
+			this.currentSelection.needsUpdate = false;
+		}
+		console.log(this.currentSelection);
+		// console.log(this.currentSelection, this.nextSelection);
+		window.localStorage.setItem('cameraState', JSON.stringify(this.getCameraState()));
+	}
 	mouseDownHandler(event) {
-
 		switch (event.button) {
-			case 0: //left
-
-			//get the thing that was clicked on
-			const pick = this.pickHelper.getPick();
-
-			// if it exists
-				if (pick) {
+			case THREE.MOUSE.LEFT:
 					switch (this.currentProcess) {
 						case "base":
-							// if transform controls exists and is NOT attatched to an object
-							if (this.transformControls && !this.transformControls.object) {
-
-								//attach the transform controls to the picked object
-								this.transformControls.attach(pick);
-								// and i guess enable the controls why not
-								this.transformControls.enabled = true;
-
-								//store the position of the picked object in case user escapes
-								pick.userData && (pick.userData.previousPosition = pick.position);
-
-
+							{
+								this.pickHelper.pick(this.pickPosition, this.sourcesAndReceivers.children, this.camera)
+								const pick = this.pickHelper.getPick();
+								if (pick) {
+									this.setNextSelection(pick, this.orbitControls.keysPressed.SHIFT);
+								}
+								else {
+									this.clearNextSelection();
+								}
 							}
 							break;
 						case "lookat":
-							this.lookAtSurface(pick);
-							break;
+							{
+								this.pickHelper.pick(this.pickPosition, this.room.solid.children, this.camera)
+								const pick = this.pickHelper.getPick();
+								pick && this.lookAtSurface(pick);
+							}
+								break;
 						case "select_surface":
-							this.getSurface(pick);
+							{
+								this.pickHelper.pick(this.pickPosition, this.room.solid.children, this.camera)
+								const pick = this.pickHelper.getPick();
+								pick && this.getSurface(pick);
+							}
 							break;
 						default:
 							break;
-					}
 
-			}
-			else {
-
-			}
+				}
 			break;
-			case 1: //middle
+			case THREE.MOUSE.MIDDLE:
 				break;
-			case 2: //right
+			case THREE.MOUSE.RIGHT:
 				break;
 			default:
 				break;
@@ -846,9 +968,12 @@ export class Renderer {
 				side: THREE.FrontSide,
 				wireframeLinewidth: 5,
 				wireframe: true,
-			})
+			}),
+
 		}
 
+
+		if(this.room) this.setupRoom()
 		geomarr.forEach((geometry, i) => {
 
 			let normal = geometry.attributes.normal.array.slice(0, 3);
@@ -878,16 +1003,23 @@ export class Renderer {
 			this.room.edge.add(edgegroup);
 			let meshsolid = new THREE.Mesh(
 				geometry,
-				// debugMaterials.geom([Math.random(), Math.random(), Math.random()])
-				debugMaterials.norm()
+				new THREE.MeshPhysicalMaterial(
+					{
+						metalness: 0.8,
+						transparent: true,
+						opacity: 0.55,
+						color: 0x000000,
+						side: THREE.DoubleSide
+					})
 			);
-			meshsolid.name = `${i}`;
+			meshsolid.name = `surface-${i}`;
 			meshsolid.userData = {
 				kind: "geometry",
 				selectable: true,
 				surface: surface,
 				monteCarloHits: 0,
-				alpha: 0.2,
+				surfaceArea: this.calculateSurfaceArea(meshsolid),
+				alpha: 0.05,
 				R(theta) {
 					return reflectionCoefficient(meshsolid.userData.alpha, theta);
 				}
@@ -904,6 +1036,67 @@ export class Renderer {
 			this.room.wire.add(wireframe);
 			// this.scene.add(wireframe);
 
+			const { GeometryView } = this;
+
+				this.GeometryView
+					.folder({
+						id: 'surfaces-folder',
+						label: meshsolid.name,
+						expanded: false
+					})
+					.checkbox({
+						id: 'visible',
+						label: 'Visible',
+						desc: 'is it visible',
+						checked: meshsolid.visible
+					})
+					.listen('change', e => {
+						meshsolid.visible = (e.target as HTMLInputElement).checked;
+					})
+					.textbox({
+						id: 'surface-' + meshsolid.id.toString() + '-name',
+						label: 'Name',
+						desc: 'name',
+						value: meshsolid.name
+					})
+					.listen('input', e => {
+						(e.target as HTMLInputElement)
+							.parentElement
+							.parentElement
+							.parentElement
+							.parentElement
+							.querySelector('label.folder-label')
+							.textContent = (e.target as HTMLInputElement).value;
+					})
+					.listen('change', e => {
+						meshsolid.name = (e.target as HTMLInputElement).value;
+					})
+					.textbox({
+						id: 'alpha',
+						label: 'Absorption',
+						desc: 'absoption coefficient',
+						value: meshsolid.userData.alpha
+					})
+					.listen('change', e => {
+						meshsolid.userData.alpha = Number((e.target as HTMLInputElement).value);
+					})
+					.color({
+						id: `surface-${meshsolid.id}-color`,
+						label: 'Color',
+						desc: 'Color',
+						value: `#${(meshsolid.material as THREE.MeshPhysicalMaterial).color.getHexString()}`
+					})
+					.listen('input', (e: TargetedInputEvent) => {
+						const value = e.target.value;
+						const other = e.target.getAttribute("other");
+						(GeometryView.inputs[other] as HTMLInputElement).value = value;
+						(meshsolid.material as THREE.MeshPhysicalMaterial).color.setHex(Number(e.target.value.replace("#","0x")))
+					}, [1, 2])
+					.exitFolder()
+
+				
+
+
 		})
 
 
@@ -912,6 +1105,9 @@ export class Renderer {
 		// this.scene.add(ambientLight);
 
 		resolve(geomarr)
+	}
+	getSurfaces() {
+		return this.room.solid.children
 	}
 	STLHandler(res, resolve, reject) {
 		resolve(res)
@@ -923,135 +1119,471 @@ export class Renderer {
 		resolve(res)
 	}
 
-	addSource(source: Source) {
-		let geom = new SphereBufferGeometry(.2, 16, 16);
+	addSource(Ro: THREE.Vector3, Rd: THREE.Vector3, name: string = "", theta: number = Math.PI*2, phi: number = Math.PI) {
+		let geom = new THREE.SphereBufferGeometry(1, 16, 16);
 		let mat = new THREE.MeshToonMaterial({
-			color: 0x00ff00,
-			transparent: true,
+			color: 0xff00000,
+			transparent: false,
 			side: THREE.DoubleSide,
-			opacity: this.regularOpacity,
-			depthTest: false,
-			depthWrite: false,
+			// opacity: this.regularOpacity,
+			// depthTest: false,
+			// depthWrite: false,
 		});
 		let mesh = new THREE.Mesh(geom, mat);
-		mesh.name = source.name;
+		mesh.name = name.length>0?name:"untitled source";
 		mesh.userData = {
 			kind: "pointofinterest",
 			isSource: true,
-			selectable: true
+			selectable: true,
+			theta,
+			phi,
+			Rd,
+			numRays: 0
 		}
-		if (source.directivityFunction) {
-			mesh.userData.directivityFunction = source.directivityFunction;
-		}
-		mesh.position.set(source.posarr[0], source.posarr[1], source.posarr[2])
+		
+		mesh.position.set(Ro.x, Ro.y, Ro.z);
+		
+
+		// var geometry = new THREE.Geometry();
+		// for (var i = 0; i < 100; i++) {
+		// let v = new THREE.Vector3(i, 10 * Math.sin(i / 100), 0);
+		// geometry.vertices.push(v);
+		// }
+
+		// var line = new MeshLine();
+		// line.setGeometry(geometry, function(p) {
+		// return 0.5;
+		// }); // makes width 2 * lineWidth
+
+		// var material = new MeshLineMaterial({
+		// color: new THREE.Color(0),
+		// // lineWidth: 1,
+		// transparent: true,
+		// opacity: 0.5,
+		// depthTest: false,
+		// blending: THREE.NormalBlending
+		// });
+		// var mesh = new THREE.Mesh(line.geometry, material); // this syntax could definitely be improved!
+		// this.scene.add(mesh);
+
+
+		if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+		const helper = new THREE.Box3Helper(mesh.geometry.boundingBox, new THREE.Color(1.0, 0.8, 0.1));
+		helper.visible=false;
+		mesh.add(helper);
+
 		this.sourcesAndReceivers.add(mesh);
+		console.log(mesh.name);
+
+
+
+
+
+		this.ObjectsView
+			.folder({
+				id: 'sources-folder',
+				label: 'Sources',
+				expanded: true
+			})
+			.textbox({
+				id: 'source-' + mesh.id.toString() + '-name',
+				label: 'Name',
+				desc: 'name',
+				value: mesh.name
+			})
+			.listen('change', e => {
+				mesh.name = (e.target as HTMLInputElement).value;
+			})
+			.vec3({
+				id: 'source-' + mesh.id.toString() + '-position',
+				label: 'Position',
+				desc: '',
+				value: mesh.position
+			})
+			.listen('input', e => {
+				mesh.position.setX(Number((e.target as HTMLInputElement).value));
+			}, 3)
+			.listen('input', e => {
+				mesh.position.setY(Number((e.target as HTMLInputElement).value));
+			}, 2)
+			.listen('input', e => {
+				mesh.position.setZ(Number((e.target as HTMLInputElement).value));
+			}, 1)
+			.exitFolder()
+
+		// this.ObjectsView.this.sourcesAndRecfeivers.children[this.sourcesAndReceivers.children.length-1]
 	}
-	addReceiver(receiver: Receiver) {
-		let geom = new SphereBufferGeometry(.2, 16, 16);
+
+	addReceiver(Ro: THREE.Vector3, params: addRecieverParams = {} as addRecieverParams) {
+		let geom = new THREE.SphereBufferGeometry(1, 16, 16);
 		let mat = new THREE.MeshToonMaterial({
-			color: 0xff0000,
-			transparent: true,
+			color: 0x00000ff,
+			transparent: false,
 			side: THREE.DoubleSide,
-			opacity: this.regularOpacity,
-			depthTest: false,
-			depthWrite: false,
+			// opacity: this.regularOpacity,
+			// depthTest: false,
+			// depthWrite: false,
 		});
 		let mesh = new THREE.Mesh(geom, mat);
-		mesh.name = receiver.name;
+		mesh.name = params.name||"untitled reciever";
 		mesh.userData = {
 			kind: "pointofinterest",
 			isSource: false,
-			selectable: true
+			selectable: true,
+			Rd: params.Rd || new THREE.Vector3(0,0,0),
+			numRays: 0
 		}
-		mesh.position.set(receiver.posarr[0], receiver.posarr[1], receiver.posarr[2])
+		mesh.position.set(Ro.x, Ro.y, Ro.z);
+		mesh.scale.setScalar(params.radius || 1);
+		if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+		const helper = new THREE.Box3Helper(mesh.geometry.boundingBox, new THREE.Color(1.0, 0.8, 0.1));
+		helper.visible=false;
+		mesh.add(helper);
+
 		this.sourcesAndReceivers.add(mesh);
+
+
+
+		this.ObjectsView
+			.folder({
+				id: 'recievers-folder',
+				label: mesh.name,
+				expanded: true
+			})
+			.textbox({
+				id: 'reciever-' + mesh.id.toString() + '-name',
+				label: 'Name',
+				desc: 'name',
+				value: mesh.name
+			})
+			.listen('change', (e: TextInputEvent)  => {
+				mesh.name = e.target.value
+			})
+			.vec3({
+				id: 'reciever-' + mesh.id.toString() + '-position',
+				label: 'Position',
+				desc: '',
+				value: mesh.position
+			})
+			.listen('input', (e: NumberInputEvent) => {
+				mesh.position.setX(e.target.valueAsNumber)
+			}, 3)
+			.listen('input', (e: NumberInputEvent)  => {
+				mesh.position.setY(e.target.valueAsNumber)
+			}, 2)
+			.listen('input', (e: NumberInputEvent)  => {
+				mesh.position.setZ(e.target.valueAsNumber)
+			}, 1)
+			// .input('reciever-' + mesh.id.toString() + '-radius', 'Radius', 'radius', mesh.scale.x, 'number')
+			// .listen('input', e => {
+
+			// }, 1)
+			.number({
+				id: 'reciever-' + mesh.id.toString() + '-radius',
+				label: 'Radius',
+				desc: 'radius',
+				min: 0,
+				max: undefined,
+				step: .1,
+				value: mesh.scale.x
+			})
+			.listen('input', (e: NumberInputEvent) => {
+				const val = e.target.valueAsNumber;
+				if (val && isFiniteAndPositive(val)) {
+					mesh.scale.setScalar(val);
+				}
+				else {
+					return false;
+				}
+			}, 1)
+			.exitFolder()
+
+		// this.ObjectsView.this.sourcesAndRecfeivers.children[this.sourcesAndReceivers.children.length-1]
 	}
+	// addReceiver(receiver: Receiver) {
+	// 	let geom = new THREE.SphereBufferGeometry(.2, 16, 16);
+	// 	let mat = new THREE.MeshToonMaterial({
+	// 		color: 0xff0000,
+	// 		transparent: true,
+	// 		side: THREE.DoubleSide,
+	// 		opacity: this.regularOpacity,
+	// 		depthTest: false,
+	// 		depthWrite: false,
+	// 	});
+	// 	let mesh = new THREE.Mesh(geom, mat);
+	// 	mesh.name = receiver.name;
+	// 	mesh.userData = {
+	// 		kind: "pointofinterest",
+	// 		isSource: false,
+	// 		selectable: true
+	// 	}
+	// 	mesh.position.set(receiver.posarr[0], receiver.posarr[1], receiver.posarr[2])
+	// 	this.sourcesAndReceivers.add(mesh);
+	// }
+
 	addSourcesAndReceivers(sources, receivers) {
-		sources.forEach(x => this.addSource(x));
-		receivers.forEach(x => this.addReceiver(x));
+		// sources.forEach(x => this.addSource(x));
+		// receivers.forEach(x => this.addReceiver(x));
 	}
+	traceRayByTransferFunction(Ro: THREE.Vector3, Rd: THREE.Vector3, iter = 1, order = 5) {
+		if (iter == 1) {
+			this.tfrays.push(new Ray(Ro));
+		}
+		Rd.normalize();
+		const raycaster = new THREE.Raycaster(Ro, Rd);
+
+		const intersectedObjects = raycaster.intersectObjects(this.surfacesAndRecievers);
+
+		// if there was a hit
+		if (intersectedObjects && intersectedObjects.length > 0) {
+			let index = 0;
+			while (index < intersectedObjects.length && Math.abs(intersectedObjects[index].distance) < 0.0001) {
+				index++;
+			}
+			if (intersectedObjects[index]) {
+				const angle = Rd.clone().multiplyScalar(-1).angleTo(intersectedObjects[index].face.normal);
+				this.tfrays[this.tfrays.length - 1].intersections.push(new Intersection(intersectedObjects[index].point, angle, intersectedObjects[index].object.id));
+		
+				// this.addLines && (this.addLine(Ro, intersectedObjects[index].point, new THREE.Color(1 - energy, 1 - energy, 1 - energy), energy));
+				
+				if (intersectedObjects[index].object.userData.kind === "pointofinterest") {
+					this.tfrays[this.tfrays.length - 1].hitRecievers.push(intersectedObjects[index].object.id);
+					if (iter < order) {
+						this.traceRayByTransferFunction(intersectedObjects[index].point, Rd, iter + 1, order);
+					}
+				}
+				else {
+					const N = intersectedObjects[index].face.normal.normalize();
+					Rd = Rd.normalize();
+					let Rr = new THREE.Vector3()
+						.subVectors(
+							Rd.clone(),
+							N.multiplyScalar(
+								2 * Rd.clone()
+									.dot(intersectedObjects[index].face.normal)));
+					if (iter < order) {
+						this.traceRayByTransferFunction(intersectedObjects[index].point, Rr, iter + 1, order);
+					}	
+				}
+				if (iter == order) {
+					if (this.tfrays[this.tfrays.length - 1].hitRecievers.length > 0) {
+						for (let i = 0; i < this.tfrays[this.tfrays.length - 1].intersections.length; i++){
+							this.addLines && (this.appendRay(i == 0 ? this.tfrays[this.tfrays.length - 1].origin : this.tfrays[this.tfrays.length - 1].intersections[i-1].pos, this.tfrays[this.tfrays.length-1].intersections[i].pos));
+						}
+					}
+					
+				}
 
 
-	updateBeams(beams: number[][][]) {
-		let iter = 0;
-		for (var i = 0; i < beams.length; i++) {
-			for (let j = 0; j < beams[i].length; j++) {
-				//@ts-ignore
-				this.beams.children[0].geometry.attributes.position.array[iter] = beams[i][j][0]; iter++;
-				//@ts-ignore
-				this.beams.children[0].geometry.attributes.position.array[iter] = beams[i][j][1]; iter++;
-				//@ts-ignore
-				this.beams.children[0].geometry.attributes.position.array[iter] = beams[i][j][2]; iter++;
 			}
 		}
-		//@ts-ignore
-		this.beams.children[0].geometry.setDrawRange(0, iter+1);
-		//@ts-ignore
-		this.beams.children[0].geometry.attributes.position.needsUpdate = true;
 	}
-	setupBeams(maxSize = 6000) {
-		let geometry = new THREE.BufferGeometry();
-		let numPoints = maxSize;
-		let positions = new Float32Array(numPoints * 3); // 3 vertices per point
-		let colors = new Float32Array(numPoints * 3); // 3 channels per point
-		geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3).setDynamic(true));
-		geometry.addAttribute('color', new THREE.BufferAttribute(colors, 3).setDynamic(true));
-		for (var i = 0, index = 0, l = numPoints; i < l; i++ , index += 3) {
-			positions[index + 0] = 0;
-			positions[index + 1] = 0;
-			positions[index + 2] = 0;
-			colors[index + 0] = Math.random();
-			colors[index + 1] = Math.random();
-			colors[index + 2] = Math.random();
+
+	traceRayByEnergy(Ro: THREE.Vector3, Rd: THREE.Vector3, energy = 1, minEnergy = 0.4) {
+		Rd.normalize();
+		const raycaster = new THREE.Raycaster(Ro, Rd);
+		const intersectedObjects = raycaster.intersectObjects(this.room.solid.children);
+
+		// if there was a hit
+		if (intersectedObjects && intersectedObjects.length > 0) {
+			let index = 0;
+			while (index < intersectedObjects.length && Math.abs(intersectedObjects[index].distance) < 0.0001) {
+				index++;
+			}
+			if (intersectedObjects[index]) {
+				if (!intersectedObjects[index].object.userData.monteCarloHits) {
+					intersectedObjects[index].object.userData.monteCarloHits = 0;
+				}
+				if (!intersectedObjects[index].object.userData.hits) {
+					intersectedObjects[index].object.userData.hits = [];
+				}
+				if (!intersectedObjects[index].object.userData.totalEnergy) {
+					intersectedObjects[index].object.userData.totalEnergy = 0;
+				}
+				intersectedObjects[index].object.userData.monteCarloHits += 1;
+				const angle = Rd.clone().multiplyScalar(-1).angleTo(intersectedObjects[index].face.normal);
+				//@ts-ignore
+				let reflectedEnergy = energy * intersectedObjects[index].object.userData.R(angle);
+				let deltaEnergy = energy - reflectedEnergy;
+				intersectedObjects[index].object.userData.hits.push({
+					pos: intersectedObjects[index].point,
+					incidentEnergy: energy,
+					reflectedEnergy: reflectedEnergy,
+					angle: angle
+				});
+
+				intersectedObjects[index].object.userData.totalEnergy += deltaEnergy;
+
+				// this.addLines && (this.addLine(Ro, intersectedObjects[index].point, new THREE.Color(1 - energy, 1 - energy, 1 - energy), energy));
+				this.addLines && (this.appendRay(Ro, intersectedObjects[index].point));
+
+				energy = reflectedEnergy;
+				const N = intersectedObjects[index].face.normal.normalize();
+
+				Rd = Rd.normalize();
+				let Rr = new THREE.Vector3()
+					.subVectors(
+						Rd.clone(),
+						N.multiplyScalar(
+							2 * Rd.clone()
+								.dot(intersectedObjects[index].face.normal)));
+				if (energy > minEnergy) {
+					this.traceRayByEnergy(intersectedObjects[index].point, Rr, energy, minEnergy);
+				}
+
+			}
 		}
-		var material = new THREE.LineBasicMaterial({
-			vertexColors: THREE.VertexColors,
+		return energy
+	}
 
-			depthTest: false,
-			depthWrite: false
-		});
+	traceRay(Ro: THREE.Vector3, Rd: THREE.Vector3, order = 5, energy = 1, iter=1) {
+		Rd.normalize();
+		const raycaster = new THREE.Raycaster(Ro,Rd);
+		const intersectedObjects = raycaster.intersectObjects(this.room.solid.children);
 
-		geometry.setDrawRange(0, 0);
-		var lines = new THREE.Line(geometry, material);
-		this.misclines = this.misclines || new THREE.Group();
-		this.beams = new THREE.Group();
-		this.beams.add(lines);
-		this.scene.add(this.beams);
-		this.scene.add(this.misclines);
+		// if there was a hit
+		if (intersectedObjects && intersectedObjects.length > 0) {
+			let index = 0;
+			while (index < intersectedObjects.length && Math.abs(intersectedObjects[index].distance) < 0.0001) {
+				index++;
+			}
+			if (intersectedObjects[index]) {
+				if (!intersectedObjects[index].object.userData.monteCarloHits) {
+					intersectedObjects[index].object.userData.monteCarloHits = 0;
+				}
+				if (!intersectedObjects[index].object.userData.hits) {
+					intersectedObjects[index].object.userData.hits = [];
+				}
+				if (!intersectedObjects[index].object.userData.totalEnergy) {
+					intersectedObjects[index].object.userData.totalEnergy = 0;
+				}
+				intersectedObjects[index].object.userData.monteCarloHits += 1;
+				const angle = Rd.clone().multiplyScalar(-1).angleTo(intersectedObjects[index].face.normal);
+				//@ts-ignore
+				let reflectedEnergy = energy * intersectedObjects[index].object.userData.R(angle);
+				let deltaEnergy = energy - reflectedEnergy;
+				intersectedObjects[index].object.userData.hits.push({
+					pos: intersectedObjects[index].point,
+					incidentEnergy: energy,
+					reflectedEnergy: reflectedEnergy,
+					angle: angle
+				});
+
+				intersectedObjects[index].object.userData.totalEnergy += deltaEnergy;
+
+				// this.addLines && (this.addLine(Ro, intersectedObjects[index].point, new THREE.Color(1 - energy, 1 - energy, 1 - energy), energy));
+				this.addLines && (this.appendRay(Ro, intersectedObjects[index].point));
+
+				energy = reflectedEnergy;
+				const N = intersectedObjects[index].face.normal.normalize();
+
+				Rd = Rd.normalize();
+				let Rr = new THREE.Vector3()
+					.subVectors(
+						Rd.clone(),
+						N.multiplyScalar(
+							2 * Rd.clone()
+								.dot(intersectedObjects[index].face.normal)));
+				if (iter < order) {
+					this.traceRay(intersectedObjects[index].point, Rr, order, energy, iter + 1);
+				}
+
+			}
+		}
+		return energy
 	}
 
 	setupRays(maxSize = 6000) {
 		let geometry = new THREE.BufferGeometry();
 		let numPoints = maxSize;
 		let positions = new Float32Array(numPoints * 3); // 3 vertices per point
-		let colors = new Float32Array(numPoints * 3); // 3 channels per point
 		geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3).setDynamic(true));
-		geometry.addAttribute('color', new THREE.BufferAttribute(colors, 3).setDynamic(true));
+		geometry.setIndex(Array(numPoints * 3).fill(0));
 		for (var i = 0, index = 0, l = numPoints; i < l; i++ , index += 3) {
 			positions[index + 0] = 0;
 			positions[index + 1] = 0;
 			positions[index + 2] = 0;
-			colors[index + 0] = Math.random();
-			colors[index + 1] = Math.random();
-			colors[index + 2] = Math.random();
 		}
 		var material = new THREE.LineBasicMaterial({
-			vertexColors: THREE.VertexColors,
-
-			depthTest: false,
-			depthWrite: false
+			color: new THREE.Color(0, 0, 0),
+			transparent: true,
+			opacity: 0.5,
+			// depthTest: false,
+			// depthWrite: false
 		});
 
-		geometry.setDrawRange(0, 0);
-		var lines = new THREE.Line(geometry, material);
+		geometry.setDrawRange(0, numPoints);
+		var lines = new THREE.LineSegments(geometry, material);
 		this.rays = new THREE.Group();
 		this.rays.add(lines);
 		this.scene.add(this.rays);
 
 	}
+	getRayGeometry() {
+		return ((this.rays.children[0] as THREE.LineSegments).geometry as THREE.BufferGeometry);
+	}
+	getRayGeometryPositionAttribute() {
+		return this.getRayGeometry().attributes['position'] as THREE.BufferAttribute
+	}
+	appendRay(p0: THREE.Vector3 | number[], p1: THREE.Vector3 | number[]) {
+		let arr = [];
+		p0 instanceof THREE.Vector3 ? arr.push(p0.x, p0.y, p0.z) : arr.push(p0[0], p0[1], p0[2]);
+		p1 instanceof THREE.Vector3 ? arr.push(p1.x, p1.y, p1.z) : arr.push(p1[0], p1[1], p1[2]);
+		this.getRayGeometryPositionAttribute().set(arr, this.prevRayIndex);
+		this.prevRayIndex += 6;
+		this.getRayGeometry().index.set([
+			this.lastRayIndexNumber,
+			this.lastRayIndexNumber+1
+		], this.prevRayIndexPos)
+		this.lastRayIndexNumber += 2;
+		this.prevRayIndexPos += 2;
+		this.getRayGeometryPositionAttribute().needsUpdate = true;
+		this.getRayGeometry().index.needsUpdate = true;
 
+	}
+	addRay(p1: THREE.Vector3, p2: THREE.Vector3, color: THREE.Color) {
+		// // .___.___.___.   .___.
+		// // 0   1   2   3   4   5
 
-	addLine(p1: THREE.Vector3, p2: THREE.Vector3, color: THREE.Color) {
+		// // line material
+		// var material = new THREE.LineBasicMaterial({
+		// 	color: 0xffffff
+		// });
+
+		// vertices = [
+		// 	new THREE.Vector3(0, 0, 0),
+		// 	new THREE.Vector3(10, 0, 0),
+		// 	new THREE.Vector3(20, 0, 0),
+		// 	new THREE.Vector3(30, 0, 0),
+		// 	new THREE.Vector3(40, 0, 0),
+		// 	new THREE.Vector3(50, 0, 0)
+		// ];
+
+		// var positions = new Float32Array(vertices.length * 3);
+
+		// for (var i = 0; i < vertices.length; i++) {
+
+		// 	positions[i * 3] = vertices[i].x;
+		// 	positions[i * 3 + 1] = vertices[i].y;
+		// 	positions[i * 3 + 2] = vertices[i].z;
+
+		// }
+
+		// indices = [0, 1, 1, 2, 2, 3, 4, 5];
+
+		// var geometry = new THREE.BufferGeometry();
+		// geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3));
+		// geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(indices), 1));
+
+		// var line = new THREE.LineSegments(geometry, material);
+		// scene.add(line);
+		//@ts-ignore
+		this.beams.children[0].geometry.setDrawRange(0, iter + 1);
+		//@ts-ignore
+		this.beams.children[0].geometry.attributes.position.needsUpdate = true;
+	}
+
+	addLine(p1: THREE.Vector3, p2: THREE.Vector3, color: THREE.Color, opacity = 1) {
 		let geometry = new THREE.BufferGeometry();
 		let numPoints = 2;
 		let positions = new Float32Array(numPoints * 3); // 3 vertices per point
@@ -1074,80 +1606,48 @@ export class Renderer {
 
 		var material = new THREE.LineBasicMaterial({
 			vertexColors: THREE.VertexColors,
-			// depthTest: false,
-			// depthWrite: false
+			transparent: true,
+			opacity,
+			depthTest: false,
+			depthWrite: false
 		});
 		geometry.setDrawRange(0, 6);
 		var lines = new THREE.Line(geometry, material);
 		this.misclines.add(lines);
 	}
-	traceRay(Ro: THREE.Vector3, Rd: THREE.Vector3, order = 5, addline = true, energy = 1, iter=1) {
-		Rd.normalize();
-		const raycaster = new THREE.Raycaster(Ro,Rd,);
-		const intersectedObjects = raycaster.intersectObjects(this.room.solid.children);
-
-		// if there was a hit
-		if (intersectedObjects && intersectedObjects.length > 0) {
-			let index = 0;
-			while (index < intersectedObjects.length && intersectedObjects[index].distance == 0) {
-				index++;
-			}
-			if (intersectedObjects[index]) {
-				if (!intersectedObjects[index].object.userData.monteCarloHits) {
-					intersectedObjects[index].object.userData.monteCarloHits = 0;
-				}
-				if (!intersectedObjects[index].object.userData.hits) {
-					intersectedObjects[index].object.userData.hits = [];
-				}
-				if (!intersectedObjects[index].object.userData.totalEnergy) {
-					intersectedObjects[index].object.userData.totalEnergy = 0;
-				}
-				intersectedObjects[index].object.userData.monteCarloHits += 1;
-				const angle = Rd.clone().multiplyScalar(-1).angleTo(intersectedObjects[index].face.normal);
-				//@ts-ignore
-				if (window.DEBUG) {
-					console.log(angle);
-				}
-				let reflectedEnergy = energy * intersectedObjects[index].object.userData.R(angle);
-				let deltaEnergy = energy - reflectedEnergy;
-				intersectedObjects[index].object.userData.hits.push({
-					uv: intersectedObjects[index].uv,
-					pos: intersectedObjects[index].point,
-					incidentEnergy: energy,
-					reflectedEnergy: reflectedEnergy
-				});
-
-				intersectedObjects[index].object.userData.totalEnergy += deltaEnergy;
-				energy = reflectedEnergy;
-
-				addline && (this.addLine(Ro, intersectedObjects[index].point, new THREE.Color(iter / order, iter / order, iter / order)));
-				const N = intersectedObjects[index].face.normal.normalize();
-
-				Rd = Rd.normalize();
-				let Rr = new THREE.Vector3()
-					.subVectors(
-						Rd.clone(),
-						N.multiplyScalar(
-							2 * Rd.clone()
-								.dot(intersectedObjects[index].face.normal)));
-				if (iter < order) {
-					this.traceRay(intersectedObjects[index].point, Rr, order, addline, energy, iter + 1);
-				}
-			}
-		}
-		return energy
-	}
 	setTrackPad(onoff: boolean) {
 		this.trackPad = onoff;
+
 		this.orbitControls.setTrackPad(this.trackPad);
+	}
+	getRaysShot() {
+		return this.sourcesAndReceivers.children.map(x=>x.userData.numRays)
+	}
+	getTotalRaysShot() {
+		let sum = 0;
+		for (let i = 0; i < this.sourcesAndReceivers.children.length; i++){
+			sum += this.sourcesAndReceivers.children[i].userData.numRays
+		}
+		return sum
 	}
 	setupMonteCarlo() {
 		this.monteCarloIntervalIds = {};
 	}
-	startMonteCarlo(source_id: number, order = 10, interval = 50, showlines=true) {
+	startMonteCarlo(source_id: number, order = 25, interval = 100, showlines=true) {
 		const src = this.sourcesAndReceivers.getObjectById(source_id);
 		if (src && !this.monteCarloIntervalIds[source_id]) {
-			src.userData.monteCarloInterval = setInterval((() => this.traceRay(src.position, new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5), order, showlines, 1)).bind(this), interval);
+			src.userData.monteCarloInterval = setInterval((() => {
+				const t = Math.random() * src.userData.theta;
+				const p = Math.random() * src.userData.phi;
+				this.traceRay(src.position,
+					new THREE.Vector3(
+						Math.random() - 0.5,
+						Math.random() - 0.5,
+						Math.random() - 0.5
+					),
+					order, 1);
+				src.userData.numRays += 1;
+			}).bind(this), interval);
 			this.monteCarloIntervalIds[String(source_id)] = true;
 		}
 	}
@@ -1167,94 +1667,66 @@ export class Renderer {
 			}
 		})
 	}
-	startAllMonteCarlo(order = 10, interval = 50, showlines = true) {
+	startAllMonteCarlo(order = 25, interval = 100, showlines = true) {
 		const srcs = this.sourcesAndReceivers.children;
 		if (srcs && srcs.length > 0) {
 			srcs.forEach((x,i,a) => {
-				a[i].userData.monteCarloInterval = setInterval((() => this.traceRay(x.position, new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5), order, showlines, 1)).bind(this), interval);
+				a[i].userData.monteCarloInterval = setInterval((() => {
+					const t = (Math.random()-0.5) * a[i].userData.theta;
+					const p = (Math.random()-0.5) * a[i].userData.phi;
+					this.traceRay(x.position,
+						new THREE.Vector3(
+							Math.random() - 0.5,
+							Math.random() - 0.5,
+							Math.random() - 0.5
+						), order, 1);
+					a[i].userData.numRays += 1;
+				}).bind(this), interval);
+
 				this.monteCarloIntervalIds[String(x.id)] = true;
 			})
-
 		}
 	}
-	setupPoints(maxSize = 6000) {
-		this.showReflections = true;
-		let geometry = new THREE.BufferGeometry();
-		let positions = new Float32Array(maxSize * 3); // 3 vertices per point
-		let colors = new Float32Array(maxSize * 3); // 3 channels per point
 
-		geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3).setDynamic(true));
-		geometry.addAttribute('color', new THREE.BufferAttribute(colors, 3).setDynamic(true));
+	startAllSources(minEnergy = 0.4, interval = 100, showlines = true) {
+		const srcs = this.sourcesAndReceivers.children.filter(x=>x.userData.isSource);
+		if (srcs && srcs.length > 0) {
+			srcs.forEach((x, i, a) => {
+				a[i].userData.monteCarloInterval = setInterval((() => {
+					const t = (Math.random() - 0.5) * a[i].userData.theta;
+					const p = (Math.random() - 0.5) * a[i].userData.phi;
+					this.traceRayByEnergy(x.position,
+						new THREE.Vector3(
+							Math.random() - 0.5,
+							Math.random() - 0.5,
+							Math.random() - 0.5
+						),1, minEnergy);
+					a[i].userData.numRays += 1;
+				}).bind(this), interval);
 
-		for (var i = 0, index = 0, l = maxSize; i < l; i++ , index += 3) {
-			positions[index + 0] = 0;
-			positions[index + 1] = 0;
-			positions[index + 2] = 0;
-			colors[index + 0] = 0;
-			colors[index + 1] = 0;
-			colors[index + 2] = 0;
+				this.monteCarloIntervalIds[String(x.id)] = true;
+			})
 		}
-		var material = new THREE.PointsMaterial({
-			vertexColors: THREE.VertexColors,
-			depthTest: false,
-			depthWrite: false,
-			size: 3.5,
-			sizeAttenuation: false
-		});
-
-		var pts = new THREE.Points(geometry, material);
-		pts.userData = {
-			kind: "receiver-reflections",
-			selectable: false
-		}
-		this.showReflections = true;
-		this.points = new THREE.Group();
-		this.points.add(pts);
-		this.scene.add(this.points);
-	}
-	updatePoints(p: number[][]) {
-		for (var i = 0; i < p.length; i++) {
-			//@ts-ignore
-			this.points.children[0].geometry.attributes.position.array[i * 3 + 0] = p[i][0];
-			//@ts-ignore
-			this.points.children[0].geometry.attributes.position.array[i * 3 + 1] = p[i][1];
-			//@ts-ignore
-			this.points.children[0].geometry.attributes.position.array[i * 3 + 2] = p[i][2];
-		}
-		//@ts-ignore
-		this.points.children[0].geometry.setDrawRange(0, p.length);
-		//@ts-ignore
-		this.points.children[0].geometry.attributes.position.needsUpdate = true;
-		this.points.visible = this.showReflections;
 	}
 
-	addPoint(pt: THREE.Vector3, col: THREE.Color) {
+	startAllSourcesByTransferFunction(order=25, interval = 100, showlines = true) {
+		const srcs = this.sourcesAndReceivers.children.filter(x => x.userData.isSource);
+		if (srcs && srcs.length > 0) {
+			srcs.forEach((x, i, a) => {
+				a[i].userData.monteCarloInterval = setInterval((() => {
+					this.traceRayByTransferFunction(x.position,
+						new THREE.Vector3(
+							Math.random() - 0.5,
+							Math.random() - 0.5,
+							Math.random() - 0.5
+						),1,order);
+					a[i].userData.numRays += 1;
+				}).bind(this), interval);
 
-
-		//@ts-ignore
-		let count = this.points.children[0].geometry.drawRange.count;
-		let index = count === Infinity ? 0 : count * 3;
-		['x', 'y', 'z'].forEach(((component, i) => {
-			//@ts-ignore
-			this.points.children[0].geometry.attributes.position.array[index + i] = pt[component];
-			console.log();
-		}).bind(this));
-		['r', 'g', 'b'].forEach(((component, i) => {
-			//@ts-ignore
-			this.points.children[0].geometry.attributes.color.array[index + i] = col[component];
-		}).bind(this));
-
-		//@ts-ignore
-		this.points.children[0].geometry.setDrawRange(0, index/3+1);
-		//@ts-ignore
-		this.points.children[0].geometry.attributes.position.needsUpdate = true;
-		//@ts-ignore
-		this.points.children[0].geometry.attributes.color.needsUpdate = true;
-
+				this.monteCarloIntervalIds[String(x.id)] = true;
+			})
+		}
 	}
-
-
-
 
 
 	lookAtSurface(surface: THREE.Mesh) {
@@ -1315,61 +1787,12 @@ export class Renderer {
 		this.easeCameraCallback = callback;
 		this.easingCamera = true;
 	}
-	addQuatHelper(x, y, z, r) {
-
-		document.querySelector('.dombugger-container').innerHTML +=/* html */`
-			<span>x: </span><input style="width: 300px;" index="0" type="range" min="-2" max="2" step=".01" value="0" id="quat-x"><br>
-			<span>y: </span><input style="width: 300px;" index="1" type="range" min="-2" max="2" step=".01" value="0" id="quat-y"><br>
-			<span>z: </span><input style="width: 300px;" index="2" type="range" min="-2" max="2" step=".01" value="0" id="quat-z"><br>
-			<span>w: </span><input style="width: 300px;" index="3" type="range" min="-2" max="2" step=".01" value="0" id="quat-w"><br>
-		`;
-		const sliders = "xyzw".split("").map(x => document.getElementById(`quat-${x}`));
-
-		function updateQuat(index, value) {
-
-		}
-		sliders.forEach(x => {
-			x.addEventListener('input', event => {
-				const index = (event.target as HTMLInputElement).getAttribute('index');
-				const value = Number((event.target as HTMLInputElement).value);
-				const curquat = this.quatHelper.quaternion.clone();
-				switch (index) {
-					case "0": this.quatHelper.quaternion.set(value, curquat.y, curquat.z, curquat.w); break;
-					case "1": this.quatHelper.quaternion.set(curquat.x, value, curquat.z, curquat.w); break;
-					case "2": this.quatHelper.quaternion.set(curquat.x, curquat.y, value, curquat.w); break;
-					case "3": this.quatHelper.quaternion.set(curquat.x, curquat.y, curquat.z, value); break;
-					default: break;
-				}
-
-			})
-		})
-
-		let geom = new SphereBufferGeometry(r, 16, 16);
-		let mat = new THREE.MeshNormalMaterial({
-			transparent: true,
-			side: THREE.BackSide,
-			opacity: this.regularOpacity,
-			depthTest: false,
-			depthWrite: false,
-		});
-		let mesh = new THREE.Mesh(geom, mat);
-		mesh.userData = {
-			kind: "quatHelper",
-			selectable: true
-		}
-		let q = new THREE.Vector3(x,y,z)
-		mesh.position.set(q.x, q.y, q.z);
-		this.quatHelper.add(mesh);
-
-		this.quatHelper.add(
-			this.makeLine(q.x, q.y, q.z, q.x + r, q.y, q.z, 0xff0000),
-			this.makeLine(q.x, q.y, q.z, q.x, q.y + r, q.z, 0x00ff00),
-			this.makeLine(q.x, q.y, q.z, q.x, q.y, q.z + r, 0x0000ff)
-		);
-	}
+	
 
 	get eventManager() { return this._eventManager }
 	set eventManager(eventManager) { this._eventManager = eventManager; }
+
+	get surfacesAndRecievers() { return this.room.solid.children.concat(this.sourcesAndReceivers.children.filter(x=>!x.userData.isSource)) }
 
 
 }

@@ -148,8 +148,42 @@ export function OrbitControls(object, domElement) {
 	this.getPolarAngle = function () {
 		return spherical.phi;
 	};
-	this.setTrackPad = function(onoff){
+	this.setTrackPad = function (onoff) {
 		scope.trackpad = onoff;
+		if (scope.trackpad) {
+			scope.mouseButtons = {
+				ORBIT: THREE.MOUSE.LEFT,
+				ZOOM: -1,
+				PAN: -1
+			};
+			scope.commandedMouseButtons = scope.controlledMouseButtons = {
+				ORBIT: -1,
+				ZOOM: THREE.MOUSE.LEFT,
+				PAN: -1
+			};
+			scope.shiftedMouseButtons = {
+				ORBIT: -1,
+				ZOOM: -1,
+				PAN: THREE.MOUSE.LEFT
+			};
+		}
+		else {
+			scope.mouseButtons = {
+				ORBIT: THREE.MOUSE.MIDDLE,
+				ZOOM: -1,
+				PAN: -1
+			};
+			scope.commandedMouseButtons = scope.controlledMouseButtons = {
+				ORBIT: -1,
+				ZOOM: THREE.MOUSE.MIDDLE,
+				PAN: -1
+			};
+			scope.shiftedMouseButtons = {
+				ORBIT: -1,
+				ZOOM: -1,
+				PAN: THREE.MOUSE.MIDDLE
+			};
+		}
 	}
 	this.getAzimuthalAngle = function () {
 		return spherical.theta;
@@ -419,22 +453,22 @@ export function OrbitControls(object, domElement) {
 	}
 	function handleKeyDown(event) {
 		switch (event.keyCode) {
-			case scope.keys.UP:
-				pan(0, scope.keyPanSpeed);
-				scope.update();
-				break;
-			case scope.keys.BOTTOM:
-				pan(0, - scope.keyPanSpeed);
-				scope.update();
-				break;
-			case scope.keys.LEFT:
-				pan(scope.keyPanSpeed, 0);
-				scope.update();
-				break;
-			case scope.keys.RIGHT:
-				pan(- scope.keyPanSpeed, 0);
-				scope.update();
-				break;
+			// case scope.keys.UP:
+			// 	pan(0, scope.keyPanSpeed);
+			// 	scope.update();
+			// 	break;
+			// case scope.keys.BOTTOM:
+			// 	pan(0, - scope.keyPanSpeed);
+			// 	scope.update();
+			// 	break;
+			// case scope.keys.LEFT:
+			// 	pan(scope.keyPanSpeed, 0);
+			// 	scope.update();
+			// 	break;
+			// case scope.keys.RIGHT:
+			// 	pan(- scope.keyPanSpeed, 0);
+			// 	scope.update();
+			// 	break;
 			case scope.keys.SHIFT:
 				scope.keysPressed.SHIFT = true;
 				break;
@@ -666,7 +700,7 @@ export function OrbitControls(object, domElement) {
 		event.preventDefault();
 	}
 	//
-	scope.domElement.addEventListener('contextmenu', onContextMenu, false);
+	scope.domElement.addEventListener('contextmenu', onContextMenu,false);
 	scope.domElement.addEventListener('mousedown', onMouseDown, false);
 	scope.domElement.addEventListener('wheel', onMouseWheel, false);
 	scope.domElement.addEventListener('touchstart', onTouchStart, false);

@@ -39,7 +39,10 @@ class triangle {
 class Surface {
 	constructor(tris) {
 		this.tris = tris;
-		this.lines = tris.map(x => [x.ab, x.ac, x.bc]).flat();
+		this.lines = tris.reduce((a, b) => {
+			a.push(b.ab, b.ac, b.bc);
+			return a;
+		},[])
 	}
 }
 

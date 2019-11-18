@@ -399,7 +399,7 @@ export default function (THREE) {
 
 			parse: function (text) {
 
-				console.time('OBJLoader');
+				// console.time('OBJLoader');
 				//@ts-ignore
 				var state = new ParserState();
 
@@ -775,7 +775,7 @@ export default function (THREE) {
 
 				}
 
-				console.timeEnd('OBJLoader');
+				// console.timeEnd('OBJLoader');
 
 				return container;
 

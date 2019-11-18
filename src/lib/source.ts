@@ -6,6 +6,9 @@ import { PointOfInterest, PointOfInterestParams } from './point-of-interest';
 
 export interface SourceParams extends PointOfInterestParams{
 	directivityFunction?: (theta: number, phi: number) => number
+	Rd?: THREE.Vector3;
+	
+
 }
 
 export function defaultDirectivityFunction(theta: number, phi: number): number{

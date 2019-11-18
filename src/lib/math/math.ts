@@ -200,3 +200,8 @@ export function rayTriangleIntersect(
 	return true;
 }
 
+
+export function isFiniteAndPositive(val: number) {
+	return isFinite(val) && val>=0
+}
+

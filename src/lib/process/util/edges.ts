@@ -27,9 +27,11 @@ export function edges(triangles) {
 	})
 
 	return tris
-		.map(tri => tri.lines)
-		//@ts-ignore
-		.flat()
+		.reduce((acc, tri) => {
+			tri.lines.forEach((x, i, a) => {
+				acc.push(a[i]);
+			});
+		},[])
 		.filter(x => !lines_equal(x.verts, sharedlines[0]))
 		.map(x => x.verts.map(y => y.xyz))
 }

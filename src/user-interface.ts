@@ -1,7 +1,9 @@
-import { Icon } from './fa-list';
-
+import { FontAwesomeIcon, Icon } from './icon-types';
+import { EltTag } from './elt-tags';
+import { StyleObject } from './css-selectors';
+import { clamp } from './lib/math/clamp';
 export interface EltParams{
-	tag: string;
+	tag: EltTag;
 	id?: string;
 	className?: string|string[];
 	children?: HTMLElement[]|EltParams[];
@@ -38,6 +40,52 @@ export class DOM{
 	}
 }
 
+
+export class InfoDiv extends DOM{
+	text: string;
+	elt: HTMLElement;
+	id: string;
+	style: StyleObject;
+	constructor(id: string, text=""){
+		super();
+		this.id = id;
+		this.text = text;
+		this.elt = this.create({
+			tag: 'div',
+			className: 'info-div',
+			id: id,
+			text: this.text
+		});
+		this.style = {} as StyleObject;
+	}
+	updateText(text: string) {
+		this.elt.textContent = text;
+		return this;
+	}
+	parent(elt: HTMLElement | string) {
+		if (elt instanceof HTMLElement) {
+			elt.appendChild(this.elt);
+		}
+		else {
+			document.querySelector(elt).appendChild(this.elt);
+		}
+		return this;
+	}
+	addStyle(style_obj: StyleObject) {
+		Object.assign(this.style, style_obj);
+		let style_string = "";
+		Object.keys(this.style).forEach(x => {
+			style_string += `${x}: ${this.style[x]};`;
+		});
+		this.elt.setAttribute('style', style_string);
+		return this;
+	}
+	attr(name:string, val:string|number|boolean) {
+		this.elt.setAttribute(name, val.toString());
+		return this;
+	}
+}
+
 export class MainMenu extends DOM{
 	buttons: IndexedElementList;
 	constructor() {
@@ -47,13 +95,13 @@ export class MainMenu extends DOM{
 	seperator() {
 		return this.create({ tag: 'hr', className: "menu-seperator" });
 	}
-	button(id, icon, text, eventHandlers?: EventHandler[]) {
+	button(id, icon: FontAwesomeIcon | Icon, text, eventHandlers?: EventHandler[]) {
 		this.buttons[id] = this.create({
 			tag: 'span',
 			className: 'button',
 			id,
 			children: [
-				{ tag: 'i', className: ['fa', icon, 'fa-2x'] },
+				{ tag: 'i', className: [icon.split('-')[0] == "fa" ? 'fa' : 'fa icon', icon, 'fa-2x'] },
 				{ tag: 'span', className: 'nav-text', text }
 			]
 		});
@@ -61,6 +109,57 @@ export class MainMenu extends DOM{
 			tag: 'li',
 			children: [this.buttons[id]]
 		})
+	}
+}
+
+namespace InputParams {
+	export interface NumberParams {
+		id: string;
+		label: string;
+		desc: string;
+		min: number;
+		max: number;
+		step: number;
+		value: number;
+		// scaleFunction?: (x: number) => number
+	}
+	export interface CheckboxParams {
+		id: string;
+		label: string;
+		desc: string;
+		checked: boolean;
+	}
+	export interface SliderParams {
+		id: string;
+		label: string;
+		desc: string;
+		min: number;
+		max: number;
+		step: number;
+		value: number;
+	}
+	export interface ColorParams {
+		id: string;
+		label: string;
+		desc: string;
+		value: string;
+	}
+	export interface TextboxParams {
+		id: string;
+		label: string;
+		desc: string;
+		value: string;
+	}
+	export interface Vec3Params{
+		id: string;
+		label: string;
+		desc: string;
+		value: THREE.Vector3;
+	}
+	export interface FolderParams{
+		id: string;
+		label: string;
+		expanded: boolean;
 	}
 }
 
@@ -73,9 +172,14 @@ export interface ViewParams{
 export class View extends DOM{
 	root: HTMLElement;
 	id: string;
-	constructor(name: string, id: string, icon?: Icon ) {
+	inputs: IndexedElementList;
+	chaining: boolean;
+	target: HTMLElement;
+	constructor(name: string, id: string, icon?: Icon|FontAwesomeIcon) {
 		super();
+		this.inputs = {} as IndexedElementList;
 		this.id = id;
+		this.chaining = false;
 		icon = icon || 'fa-circle';
 		this.root = this.create({
 			tag: 'div',
@@ -99,13 +203,331 @@ export class View extends DOM{
 				},
 				{
 					tag: 'div',
-					className: 'side-menu-content-content'
+					className: 'side-menu-content-content',
+					style: 'transform:translateY(0px);'
 				}
 			]
+		});
+		this.target = this.root.querySelector('.side-menu-content-content');
+		this.target.addEventListener('mousewheel', (function (e) {
+			if (this.target.clientHeight > window.innerHeight * .8) {
+
+				const translation = Number(this.target.getAttribute('style').replace(/transform\:translateY\(|px\)\;/gmi, '')) - e.deltaY;
+				const val = clamp(translation, -this.target.clientHeight + window.innerHeight * .8, 0.0);
+				// console.log(val / (-this.target.clientHeight + window.innerHeight * .8));
+				this.target.setAttribute('style', `transform:translateY(${val}px);`);
+			}
+		}).bind(this))
+	}
+	chain() {
+		this.chaining = true;
+	}
+	unchain() {
+		this.chaining = false;
+	}
+	get(n:number|number[] = 1) {
+		const keys = Object.keys(this.inputs);
+		n = n instanceof Array ? n : [n];
+		return n.map(x=>this.inputs[keys[keys.length - x]]);
+	}
+	listen(event: string, handler: (e: Event) => void, n:number|number[]=1) {
+		this.get(n).forEach((x,i,a) => {
+			a[i].addEventListener(event, handler);
 		})
+		return this;
+	}
+	section(name) {
+		const section = this.create({
+			tag: 'div',
+			className: 'side-menu-content-subsection',
+			children: [
+				{
+					tag: 'div',
+					className: 'side-menu-content-subsection-header',
+					text: name || ""
+				}
+			]
+		});
+		return this
+	}
+	slider(params: InputParams.SliderParams) {
+		const slider = this.create({
+			tag: 'input',
+			type: 'range',
+			id: params.id + '-slider',
+			baseid: params.id,
+			kind: 'slider',
+			other: params.id + '-input',
+			min: params.min,
+			max: params.max,
+			step: params.step,
+			value: params.value
+		});
+		const input = this.create({
+			baseid: params.id,
+			kind: 'input',
+			other: params.id+'-slider',
+			id: params.id + '-input',
+			tag: 'input',
+			type: 'text',
+		});
+		(input as HTMLInputElement).value = String(params.value);
+		this.inputs[params.id + '-slider'] = slider;
+		this.inputs[params.id + '-input'] = input;
+		const label = this.create({
+			tag: 'label',
+			text: params.label
+		});
+		this.target.appendChild(this.create({
+			tag: 'div',
+			className: 'labeled-input',
+			children: [
+				{
+					tag: 'div',
+					className: 'labeled-input-grid',
+					children: [label, this.create({ tag: 'span', className: 'input', children: [input,slider] })]
+				}
+			]
+		}));
+
+		
+		return this;
+	}
+	color(params: InputParams.ColorParams) {
+		const colorinput = this.create({
+          	tag: "input",
+			type: 'color',
+		  	other: params.id+'-text'
+        });
+        (colorinput as HTMLInputElement).value = params.value;
+		this.inputs[params.id+'-color'] = colorinput;
+		const input = this.create({
+			tag: "input",
+			type: 'text',
+			other: params.id+'-color'
+		});
+		(input as HTMLInputElement).value = params.value;
+		this.inputs[params.id+'-text'] = input;
+        const label = this.create({
+          tag: "label",
+          text: params.label
+        });
+        this.target.appendChild(
+          this.create({
+            tag: "div",
+            className: "labeled-input",
+            children: [
+              {
+                tag: "div",
+                className: "labeled-input-grid labeled-input-grid3",
+                children: [label, colorinput, input]
+              }
+            ]
+          })
+        );
+        return this;
+	}
+	checkbox(params: InputParams.CheckboxParams) {
+		const checkbox = this.create({ tag: 'input', type: 'checkbox' });
+		(checkbox as HTMLInputElement).checked = params.checked;
+		this.inputs[params.id] = checkbox;
+		const label = this.create({
+			tag: 'label',
+			text: params.label,
+			id: params.id
+		})
+		this.target.appendChild(this.create({
+			tag: 'div',
+			className: 'labeled-checkbox',
+			children: [
+				{
+					tag: 'div',
+					className: 'labeled-input-grid',
+					children: [label, checkbox]
+				}
+			]
+		}));
+		return this
+	}
+	number(params: InputParams.NumberParams) {
+		const input = this.create({
+			tag: "input",
+			type: "number",
+			id: params.id
+		});
+		params.value && ((input as HTMLInputElement).value = String(params.value));
+		params.min && ((input as HTMLInputElement).min = String(params.min));
+		params.max && ((input as HTMLInputElement).max = String(params.max));
+		params.step && ((input as HTMLInputElement).step = String(params.step));
+
+		this.inputs[params.id] = input;
+		const label = this.create({
+			tag: 'label',
+			text: params.label||"#######"
+		})
+		this.target.appendChild(this.create({
+			tag: 'div',
+			className: 'labeled-input',
+			children: [
+				{
+					tag: 'div',
+					className: 'labeled-input-grid',
+					children: [label, input]
+				}
+			]
+		}));
+		// if (params.scaleFunction) {
+		// 	input.addEventListener('mousewheel', e => {
+		// 		(e.target as HTMLInputElement).value = String(params.scaleFunction((e.target as HTMLInputElement).valueAsNumber))
+		// 	})
+		// }
+		return this;
+	}
+	textbox(params: InputParams.TextboxParams) {
+		const input = this.create({
+			tag: 'input',
+			type: 'text',
+			id: params.id
+		});
+		(input as HTMLInputElement).value = params.value;
+		this.inputs[params.id] = input;
+		const label = this.create({
+			tag: 'label',
+			text: params.label
+		})
+		this.target.appendChild(this.create({
+			tag: 'div',
+			className: 'labeled-input',
+			children: [
+				{
+					tag: 'div',
+					className: 'labeled-input-grid',
+					children: [label, input]
+				}
+			]
+		}));
+		return this;
+	}
+	vec3(params: InputParams.Vec3Params) {
+		const inputx = this.create({
+			tag: 'input',
+			type: 'number'
+		});
+		const inputy = this.create({
+			tag: 'input',
+			type: 'number'
+		});
+		const inputz = this.create({
+			tag: 'input',
+			type: 'number'
+		});
+		(inputx as HTMLInputElement).value = String(params.value.x);
+		(inputy as HTMLInputElement).value = String(params.value.y);
+		(inputz as HTMLInputElement).value = String(params.value.z);
+		this.inputs[`${params.id}.x`] = inputx;
+		this.inputs[`${params.id}.y`] = inputy;
+		this.inputs[`${params.id}.z`] = inputz;
+		this.target.appendChild(this.create({
+			tag: 'div',
+			className: 'labeled-input-row-container',
+			children: [
+				{
+					tag: 'label',
+					className: 'labeled-input-row-label',
+					text: params.label
+				},
+				{
+					tag: 'div',
+					className: ['labeled-input-row,section-indent-1'],
+					children: [
+						{
+							tag: 'div',
+							className: ['labeled-input,labeled-input-vec3'],
+							children: [this.create({
+								tag: 'label',
+								text: 'x:'
+							}), inputx]
+						},
+						{
+							tag: 'div',
+							className: ['labeled-input,labeled-input-vec3'],
+							children: [this.create({
+								tag: 'label',
+								text: 'y:'
+							}), inputy]
+						},
+						{
+							tag: 'div',
+							className: ['labeled-input,labeled-input-vec3'],
+							children: [this.create({
+								tag: 'label',
+								text: 'z:'
+							}), inputz]
+						}
+					]
+				}
+			]
+		}));
+		return this;
+	}
+	folder(params: InputParams.FolderParams) {
+		const folderContents = this.create({
+			tag: 'div',
+			id: params.id,
+			className: 'folder-contents'
+		});
+		const folderOpenCloseButton = this.create({
+			tag: 'a',
+			className: ['folder-open-close-button'],
+			text: params.expanded ? '▼' : '▶'
+		});
+		const folderLabel = this.create({
+			tag: 'label',
+			className: ['folder-label'],
+			text: params.label
+		});
+		const folder = this.create({
+			tag: 'div',
+			className: 'folder-container',
+			expanded: params.expanded,
+			children: [
+				folderOpenCloseButton,
+				folderLabel,
+				folderContents
+			]
+		});
+		folderOpenCloseButton.addEventListener('click', e => {
+			const expanded = folder.getAttribute('expanded')==="true";
+			if (expanded) {
+				folderOpenCloseButton.textContent = "▶";
+				folder.setAttribute('expanded','false')
+			}
+			else {
+				folderOpenCloseButton.textContent = "▼";
+				folder.setAttribute('expanded', 'true')
+			}
+		})
+		folderLabel.addEventListener('click', e => {
+			const expanded = folder.getAttribute('expanded') === "true";
+			if (expanded) {
+				folderOpenCloseButton.textContent = "▶";
+				folder.setAttribute('expanded', 'false')
+			}
+			else {
+				folderOpenCloseButton.textContent = "▼";
+				folder.setAttribute('expanded', 'true')
+			}
+		})
+		this.target.appendChild(folder);
+		this.target = folderContents;
+
+		return this;
+	}
+	exitFolder() {
+		this.target = this.target.parentElement.parentElement;
 	}
 	testtime(html:string) {
-		this.root.querySelector('.side-menu-content-content').innerHTML = html;
+		this.target.innerHTML = html;
 	}
 	hide() {
 		if (arguments.length == 0) {
@@ -116,6 +538,22 @@ export class View extends DOM{
 		if (arguments.length == 0) {
 			this.root.classList.contains('hidden') && this.root.classList.remove('hidden')
 		}
+	}
+	emit(event: string) {
+		this.get().forEach(x=>x.dispatchEvent(new Event(event)));
+		return this;
+	}
+
+}
+
+
+export interface SideMenuState{
+	root_attr: {
+		state: string
+		style: string
+	},
+	props: {
+		currentView: string
 	}
 }
 
@@ -128,6 +566,7 @@ export class SideMenu extends DOM{
 	root: HTMLElement;
 	state: string;
 	currentView: string;
+	numColumns: string;
 	constructor() {
 		super();
 		this.currentView = "";
@@ -141,6 +580,7 @@ export class SideMenu extends DOM{
 			className: 'side-menu',
 			style: 'width:400px',
 			state: 'collapsed',
+			numColumns: '2',
 			children: [
 				{
 					tag: 'div',
@@ -153,7 +593,53 @@ export class SideMenu extends DOM{
 				}
 			]
 		});
+
+
 		document.body.appendChild(this.root);
+	}
+	getDefaultState() {
+		const viewKeys = Object.keys(this.views);
+		return {
+			root_attr: {
+				state: "collapsed",
+				style: "width:400px"
+			},
+			props: {
+				currentView: viewKeys.length > 0 ? viewKeys[0] : ""
+			}
+		} as SideMenuState;
+	}
+	saveState(storage_key: string = "sideMenu") {
+		const state = {
+			root_attr: {
+				state: this.root.getAttribute('state'),
+				style: this.root.getAttribute('style'),
+			},
+			props: {
+				currentView: this.currentView
+			}
+		} as SideMenuState;
+		window.localStorage.setItem(storage_key, JSON.stringify(state));
+	}
+	restoreState(state?: SideMenuState | string) {
+		//TODO clean this up lol
+		const storedState = window.localStorage.getItem('sideMenu');
+		if (!storedState) {
+			console.log(storedState)
+			state = this.getDefaultState();
+		}
+		else {
+			state = storedState
+		}
+		state = state
+			? (typeof state === "string")
+				? JSON.parse(state) as SideMenuState
+				: state
+			: (this.getDefaultState());
+		this.setView(state.props.currentView);
+		this.root.setAttribute('state', state.root_attr.state);
+		this.root.setAttribute('style', state.root_attr.style);
+		this.state = state.root_attr.state;
 	}
 	collapse() {
 		this.state = 'collapsed';
